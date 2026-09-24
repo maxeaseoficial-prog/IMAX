@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type {
   AgentMeta,
+  Attachment,
   Mission,
   MissionEvent,
   Settings,
@@ -27,6 +28,7 @@ function missionStatusLabel(status?: string) {
     integrating: "INTEGRANDO",
     reviewing: "REVISANDO",
     done: "CONCLUÍDA",
+    blocked: "BLOQUEADA",
     error: "ERRO",
     canceled: "CANCELADA"
   };
@@ -52,8 +54,35 @@ function shortPath(value?: string) {
   return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : value;
 }
 
-function TerminalPane({ agent }: { agent: AgentMeta }) {
+function TerminalPane({
+  agent,
+  canSendInstruction
+}: {
+  agent: AgentMeta;
+  canSendInstruction: boolean;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const [sending, setSending] = useState(false);
+  const [instructionState, setInstructionState] = useState("");
+
+  const sendInstruction = async () => {
+    const text = instruction.trim();
+    if (!text || sending) return;
+
+    setSending(true);
+    setInstructionState("");
+
+    try {
+      const result = await window.imx.sendAgentInstruction(agent.id, text);
+      setInstruction("");
+      setInstructionState(`Enfileirada · posição ${result.position}`);
+    } catch (error) {
+      setInstructionState(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSending(false);
+    }
+  };
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -159,6 +188,38 @@ function TerminalPane({ agent }: { agent: AgentMeta }) {
       </div>
 
       <div ref={hostRef} className="terminal-host" />
+
+      {agent.kind === "mission" ? (
+        <div className="agent-command">
+          <div className="agent-command__row">
+            <input
+              value={instruction}
+              onChange={(event) => setInstruction(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void sendInstruction();
+                }
+              }}
+              placeholder={
+                canSendInstruction
+                  ? "Enviar uma instrução só para este agente…"
+                  : "Este agente não está aceitando novas instruções"
+              }
+              disabled={!canSendInstruction || sending}
+            />
+            <button
+              onClick={() => void sendInstruction()}
+              disabled={!canSendInstruction || sending || !instruction.trim()}
+            >
+              {sending ? "…" : "ENVIAR"}
+            </button>
+          </div>
+          <span className="agent-command__hint">
+            {instructionState || "Você pode enviar enquanto ele trabalha; a instrução entra na fila deste agente."}
+          </span>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -171,6 +232,7 @@ export default function App() {
     autoEdit: true
   });
   const [brief, setBrief] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [mission, setMission] = useState<Mission | null>(null);
   const [agents, setAgents] = useState<AgentMeta[]>([]);
   const [history, setHistory] = useState<Mission[]>([]);
@@ -238,14 +300,18 @@ export default function App() {
         setNotice(event.message);
       }
 
-      if (event.type === "mission:error" && event.message) {
+      if (
+        (event.type === "mission:error" || event.type === "mission:blocked") &&
+        event.message
+      ) {
         setNotice(event.message);
       }
 
       if (
         event.type === "mission:completed" ||
         event.type === "mission:canceled" ||
-        event.type === "mission:error"
+        event.type === "mission:error" ||
+        event.type === "mission:blocked"
       ) {
         void refreshHistory();
       }
@@ -271,6 +337,21 @@ export default function App() {
       await persistSettings({ workspace: selected });
       setNotice("");
     }
+  };
+
+  const chooseAttachments = async () => {
+    const selected = await window.imx.chooseAttachments();
+    if (!selected.length) return;
+
+    setAttachments((current) => {
+      const byPath = new Map(current.map((item) => [item.path, item]));
+      for (const item of selected) byPath.set(item.path, item);
+      return Array.from(byPath.values()).slice(0, 20);
+    });
+  };
+
+  const removeAttachment = (path: string) => {
+    setAttachments((current) => current.filter((item) => item.path !== path));
   };
 
   const startMission = async () => {
@@ -299,7 +380,8 @@ export default function App() {
         brief: brief.trim(),
         cwd: settings.workspace,
         agentCount: settings.agentCount,
-        autoEdit: settings.autoEdit
+        autoEdit: settings.autoEdit,
+        attachments
       });
       setMission(created);
     } catch (error) {
@@ -422,7 +504,7 @@ export default function App() {
               </div>
               <div>
                 <span className="pilot-label">PILOTO</span>
-                <strong>{activeMission ? missionStatusLabel(mission?.status) : "PRONTO PARA MISSÃO"}</strong>
+                <strong>{mission ? missionStatusLabel(mission.status) : "PRONTO PARA MISSÃO"}</strong>
               </div>
             </div>
 
@@ -455,12 +537,42 @@ export default function App() {
           </div>
 
           <div className="brief-row">
-            <textarea
-              value={brief}
-              onChange={(event) => setBrief(event.target.value)}
-              placeholder="Ex.: Construa um site premium para esta loja. Use a identidade atual, crie frontend, backend, assets e valide tudo."
-              disabled={activeMission}
-            />
+            <div className="brief-composer">
+              <textarea
+                value={brief}
+                onChange={(event) => setBrief(event.target.value)}
+                placeholder="Ex.: Construa um site premium para esta loja. Use a identidade atual, crie frontend, backend, assets e valide tudo."
+                disabled={activeMission}
+              />
+
+              <div className="composer-toolbar">
+                <button
+                  className="attachment-button"
+                  onClick={() => void chooseAttachments()}
+                  disabled={activeMission}
+                >
+                  + Anexar arquivo
+                </button>
+                <span>PDF, imagem, documento, código ou qualquer arquivo local. Links podem ser colados na missão.</span>
+              </div>
+
+              {attachments.length ? (
+                <div className="attachment-list">
+                  {attachments.map((item) => (
+                    <div className="attachment-chip" key={item.path}>
+                      <span>{item.name}</span>
+                      <button
+                        title="Remover anexo"
+                        disabled={activeMission}
+                        onClick={() => removeAttachment(item.path)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
 
             {activeMission ? (
               <button className="danger-button" onClick={() => void cancelMission()}>
@@ -520,6 +632,18 @@ export default function App() {
               ) : null}
             </div>
           ) : null}
+
+          {mission && (mission.status === "error" || mission.status === "blocked") ? (
+            <div className="delivery-card delivery-card--error">
+              <div>
+                <span className="delivery-kicker">
+                  {mission.status === "blocked" ? "MISSÃO BLOQUEADA" : "MISSÃO INTERROMPIDA"}
+                </span>
+                <strong>{mission.status === "blocked" ? "Codex indisponível para continuar" : "Nenhuma entrega válida"}</strong>
+                <p>{mission.error || mission.summary || "A missão não foi concluída."}</p>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="workspace-head">
@@ -541,7 +665,17 @@ export default function App() {
               <p>Inicie uma missão com o PILOTO ou abra um Codex manual para trabalhar de forma independente.</p>
             </div>
           ) : (
-            missionAgents.map((agent) => <TerminalPane key={agent.id} agent={agent} />)
+            missionAgents.map((agent) => (
+              <TerminalPane
+                key={agent.id}
+                agent={agent}
+                canSendInstruction={Boolean(
+                  agent.kind === "mission" &&
+                  agent.missionId === mission?.id &&
+                  activeMission
+                )}
+              />
+            ))
           )}
         </section>
       </main>
