@@ -9,6 +9,7 @@ function subscribe(channel, callback) {
 contextBridge.exposeInMainWorld("imx", {
   getSystemStatus: () => ipcRenderer.invoke("system:status"),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
+  chooseAttachments: () => ipcRenderer.invoke("attachments:choose"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   setSettings: (patch) => ipcRenderer.invoke("settings:set", patch),
   listMissions: () => ipcRenderer.invoke("missions:list"),
@@ -22,6 +23,8 @@ contextBridge.exposeInMainWorld("imx", {
 
   startMission: (input) => ipcRenderer.invoke("mission:start", input),
   cancelMission: (missionId) => ipcRenderer.invoke("mission:cancel", missionId),
+  sendAgentInstruction: (agentId, text) =>
+    ipcRenderer.invoke("mission:agent-instruction", { agentId, text }),
   openPath: (targetPath) => ipcRenderer.invoke("path:open", targetPath),
 
   onTerminalCreated: (callback) => subscribe("terminal:created", callback),
