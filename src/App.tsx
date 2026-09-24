@@ -96,6 +96,10 @@ function TerminalPane({ agent }: { agent: AgentMeta }) {
     terminal.loadAddon(fitAddon);
     terminal.open(hostRef.current);
 
+    void window.imx.getTerminalBuffer(agent.id).then((buffer) => {
+      if (buffer) terminal.write(buffer);
+    });
+
     const fit = () => {
       try {
         fitAddon.fit();
