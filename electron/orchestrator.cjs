@@ -42,6 +42,31 @@ function cleanJsonText(text) {
   return unfenced;
 }
 
+function stripAnsi(text) {
+  return String(text || "").replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "");
+}
+
+function parseSessionId(text) {
+  const clean = stripAnsi(text);
+  const human = Array.from(clean.matchAll(/session id:\s*([0-9a-f-]{20,})/gi));
+  if (human.length) return human[human.length - 1][1];
+
+  const json = Array.from(clean.matchAll(/"thread_id"\s*:\s*"([^"]+)"/g));
+  if (json.length) return json[json.length - 1][1];
+
+  return null;
+}
+
+function hasUsageLimit(text) {
+  return /hit your usage limit|usage limit|try again at/i.test(stripAnsi(text));
+}
+
+function safeAttachmentName(value) {
+  return path.basename(String(value || "arquivo"))
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .slice(0, 120) || "arquivo";
+}
+
 const FALLBACK_ROLES = [
   ["Arquitetura", "Mapeie a solução, contratos entre módulos, riscos e critérios de conclusão. Faça mudanças estruturais somente quando necessárias."],
   ["Frontend", "Implemente a interface, estados, componentes e experiência visual relacionada à missão."],
@@ -63,6 +88,7 @@ class Orchestrator {
     this.emit = emit;
     this.missions = new Map();
     this.children = new Map();
+    this.agentRuns = new Map();
     fs.mkdirSync(this.worktreesRoot, { recursive: true });
   }
 
@@ -130,14 +156,32 @@ class Orchestrator {
     }
   }
 
+  buildExecArgs(prompt, { fullAuto = false, resumeSessionId = null } = {}) {
+    const args = [];
+    if (fullAuto) {
+      args.push("-a", "never");
+    }
+
+    args.push("exec");
+
+    if (fullAuto) {
+      args.push("--sandbox", "workspace-write");
+    }
+
+    if (resumeSessionId) {
+      args.push("resume", resumeSessionId);
+    }
+
+    args.push(prompt);
+    return args;
+  }
+
   runCodex(prompt, cwd, mission, { fullAuto = false, label = "PILOTO" } = {}) {
     if (!this.codexPath) {
       return Promise.reject(new Error("Codex CLI não encontrado."));
     }
 
-    const args = ["exec"];
-    if (fullAuto) args.push("--full-auto");
-    args.push(prompt);
+    const args = this.buildExecArgs(prompt, { fullAuto });
 
     return new Promise((resolve, reject) => {
       const child = spawn(this.codexPath, args, {
@@ -280,12 +324,59 @@ class Orchestrator {
     }
   }
 
-  buildAgentPrompt(mission, task, workspace) {
+  stageAttachments(mission, workspace, task) {
+    const source = Array.isArray(mission.attachments) ? mission.attachments : [];
+    if (!source.length) return [];
+
+    const folder = path.join(workspace.cwd, ".imx-input", mission.id, slug(task.id || task.role));
+    fs.mkdirSync(folder, { recursive: true });
+
+    const staged = [];
+    for (let index = 0; index < source.length; index += 1) {
+      const item = source[index];
+      const sourcePath = typeof item === "string" ? item : item.path;
+      if (!sourcePath || !fs.existsSync(sourcePath)) continue;
+
+      const target = path.join(
+        folder,
+        `${String(index + 1).padStart(2, "0")}-${safeAttachmentName(sourcePath)}`
+      );
+
+      fs.copyFileSync(sourcePath, target);
+      staged.push({
+        name: typeof item === "string" ? path.basename(sourcePath) : (item.name || path.basename(sourcePath)),
+        path: target
+      });
+    }
+
+    return staged;
+  }
+
+  cleanupAttachments(staged) {
+    const roots = new Set((staged || []).map((item) => path.dirname(item.path)).filter(Boolean));
+    for (const root of roots) {
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+
+  buildAgentPrompt(mission, task, workspace, stagedAttachments = []) {
+    const attachmentLines = stagedAttachments.length
+      ? [
+          "",
+          "ARQUIVOS ANEXADOS PELO USUÁRIO:",
+          ...stagedAttachments.map((item) => `- ${item.name}: ${item.path}`),
+          "Leia/inspecione esses arquivos quando forem relevantes para sua tarefa."
+        ]
+      : [];
+
     return [
       `Você é um agente do squad IMx. Seu papel é: ${task.role}.`,
       `Missão geral: ${mission.brief}`,
       `Sua tarefa exclusiva: ${task.title}`,
       `Instruções: ${task.instructions}`,
+      ...attachmentLines,
       "",
       "REGRAS:",
       "- Comece imediatamente e trabalhe apenas no escopo da sua tarefa.",
@@ -428,6 +519,14 @@ class Orchestrator {
       plan: null,
       agents: [],
       summary: "",
+      attachments: (Array.isArray(input.attachments) ? input.attachments : [])
+        .filter((item) => item && item.path && fs.existsSync(item.path))
+        .slice(0, 20)
+        .map((item) => ({
+          path: item.path,
+          name: item.name || path.basename(item.path),
+          size: Number(item.size) || 0
+        })),
       workspaceMode: "pending",
       canceled: false
     };
