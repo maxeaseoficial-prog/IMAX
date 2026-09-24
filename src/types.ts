@@ -24,6 +24,12 @@ export interface AgentMeta {
   branch?: string | null;
 }
 
+export interface Attachment {
+  path: string;
+  name: string;
+  size: number;
+}
+
 export interface MissionTask {
   id: string;
   title: string;
@@ -49,6 +55,7 @@ export interface Mission {
   finishedAt?: string;
   plan?: MissionPlan | null;
   agents?: AgentMeta[];
+  attachments?: Attachment[];
   summary?: string;
   error?: string;
   workspaceMode?: "pending" | "worktree" | "shared";
@@ -93,6 +100,7 @@ declare global {
     imx: {
       getSystemStatus(): Promise<SystemStatus>;
       chooseWorkspace(): Promise<string | null>;
+      chooseAttachments(): Promise<Attachment[]>;
       getSettings(): Promise<Settings>;
       setSettings(patch: Partial<Settings>): Promise<Settings>;
       listMissions(): Promise<Mission[]>;
@@ -114,8 +122,13 @@ declare global {
         cwd: string;
         agentCount: number;
         autoEdit: boolean;
+        attachments: Attachment[];
       }): Promise<Mission>;
       cancelMission(missionId: string): Promise<boolean>;
+      sendAgentInstruction(agentId: string, text: string): Promise<{
+        queued: boolean;
+        position: number;
+      }>;
       openPath(targetPath: string): Promise<boolean>;
 
       onTerminalCreated(callback: (payload: AgentMeta) => void): () => void;
