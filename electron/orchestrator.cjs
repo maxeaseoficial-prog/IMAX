@@ -158,13 +158,20 @@ class Orchestrator {
 
   buildExecArgs(prompt, { fullAuto = false, resumeSessionId = null } = {}) {
     const args = [];
+
     if (fullAuto) {
       args.push("-a", "never");
+
+      if (resumeSessionId) {
+        // Some Codex CLI versions reject --sandbox on `exec resume`.
+        // Root config overrides are applied to resumed turns too.
+        args.push("-c", 'sandbox_mode="workspace-write"');
+      }
     }
 
     args.push("exec");
 
-    if (fullAuto) {
+    if (fullAuto && !resumeSessionId) {
       args.push("--sandbox", "workspace-write");
     }
 
