@@ -123,6 +123,7 @@ function registerIpc() {
   ipcMain.handle("settings:set", (_event, patch) => state.setSettings(patch || {}));
   ipcMain.handle("missions:list", () => state.listMissions());
   ipcMain.handle("terminal:list", () => terminalManager.list());
+  ipcMain.handle("terminal:buffer", (_event, id) => terminalManager.getBuffer(id));
 
   ipcMain.handle("terminal:create", (_event, input = {}) => {
     const cwd = ensureWorkspace(input.cwd || state.getSettings().workspace);
