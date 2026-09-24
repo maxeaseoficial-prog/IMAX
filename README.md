@@ -14,6 +14,9 @@ A ideia central é simples: você entrega uma missão ampla para o **PILOTO**, e
 - Codex CLI reutilizando o login já existente na máquina.
 - Modo manual com terminal shell ou Codex interativo independente.
 - Modo squad com planejamento, execução paralela, status, cancelamento e logs.
+- Anexos de missão: PDF, imagem, documento, código e outros arquivos locais.
+- Imagens anexadas são passadas ao Codex como imagem; outros arquivos ficam disponíveis no workspace de cada agente.
+- Campo de instrução por agente: você pode mandar comandos diferentes para cada pane enquanto o squad está trabalhando; eles entram na fila individual daquele agente.
 - Worktrees Git isoladas quando o projeto está limpo.
 - Histórico local básico de missões.
 - Resultado final em uma branch `imx/mission-<id>` e worktree de integração.
@@ -22,7 +25,7 @@ A ideia central é simples: você entrega uma missão ampla para o **PILOTO**, e
 
 O IMx não ativa bypass irrestrito de permissões.
 
-No modo squad, a opção **edição automática** habilita `codex exec --full-auto`, permitindo edição do workspace pelo agente dentro do sandbox apropriado. Sem essa opção, o Codex fica mais restrito.
+No modo squad, a opção **edição automática** usa aprovação `never` com sandbox `workspace-write` para permitir mudanças no workspace sem liberar acesso irrestrito à máquina. Sem essa opção, o Codex roda com as permissões configuradas pelo usuário.
 
 O IMx não faz push, release ou deploy automaticamente.
 
@@ -56,9 +59,11 @@ npm run build
 2. Selecione a pasta do projeto.
 3. Escolha a quantidade de agentes.
 4. Descreva a missão para o PILOTO.
-5. Clique em **INICIAR MISSÃO**.
-6. Acompanhe cada terminal trabalhando em paralelo.
-7. Ao final, abra a worktree/branch integrada indicada no painel.
+5. Opcionalmente, anexe arquivos ou cole links no briefing.
+6. Clique em **INICIAR MISSÃO**.
+7. Acompanhe cada terminal trabalhando em paralelo.
+8. Se quiser corrigir a direção de um agente, escreva no campo **Enviar uma instrução só para este agente** dentro do pane dele.
+9. Ao final, abra a worktree/branch integrada indicada no painel.
 
 Também é possível clicar em **+ Codex** para abrir um Codex interativo normal dentro de um pane, sem usar o PILOTO.
 
