@@ -76,7 +76,9 @@ class TerminalManager extends EventEmitter {
       resolveExit = resolve;
     });
 
-    const session = { proc, meta, log, logPath, exitPromise, resolveExit, buffer: "" };
+    const previousBuffer = this.lastBuffers.get(id) || "";
+    const session = { proc, meta, log, logPath, exitPromise, resolveExit, buffer: previousBuffer };
+    this.lastExits.delete(id);
     this.sessions.set(id, session);
     this.emit("created", { ...meta, logPath });
 
@@ -117,6 +119,25 @@ class TerminalManager extends EventEmitter {
     const session = this.sessions.get(id);
     if (session) return session.buffer;
     return this.lastBuffers.get(id) || "";
+  }
+
+  inject(id, data) {
+    const text = String(data || "");
+    if (!text) return false;
+    const session = this.sessions.get(id);
+
+    if (session) {
+      session.buffer = (session.buffer + text).slice(-120000);
+      try {
+        session.log.write(text);
+      } catch {}
+    } else {
+      const current = this.lastBuffers.get(id) || "";
+      this.lastBuffers.set(id, (current + text).slice(-120000));
+    }
+
+    this.emit("data", { id, data: text });
+    return true;
   }
 
   write(id, data) {
