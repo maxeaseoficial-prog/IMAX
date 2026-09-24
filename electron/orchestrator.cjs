@@ -607,8 +607,10 @@ class Orchestrator {
         "INSTRUÇÃO ADICIONAL DO USUÁRIO PARA ESTE MESMO AGENTE:",
         instruction,
         "",
-        `Continue atuando como ${task.role} na mesma tarefa da missão.`,
-        "Considere o trabalho já realizado neste workspace.",
+        `Missão geral: ${mission.brief}`,
+        `Seu papel: ${task.role}`,
+        `Sua tarefa: ${task.title}`,
+        "Considere o trabalho já realizado neste workspace e continue a partir dele.",
         "Aplique a instrução, valide o que for relevante e depois resuma o que mudou.",
         "Não faça push, release ou deploy."
       ].join("\n");
