@@ -255,6 +255,14 @@ class Orchestrator {
       const output = await this.runCodex(prompt, mission.cwd, mission, { fullAuto: false, label: "PILOTO · planejamento" });
       return this.parsePlan(output, mission.brief, mission.agentCount);
     } catch (error) {
+      if (hasUsageLimit(error.message)) {
+        mission.codexUsageLimited = true;
+        this.emitMission("mission:warning", mission, {
+          message: "O limite de uso do Codex foi atingido antes do squad iniciar."
+        });
+        return this.fallbackPlan(mission.brief, mission.agentCount);
+      }
+
       this.emitMission("mission:warning", mission, {
         message: `O PILOTO não conseguiu gerar o plano via Codex; usando divisão local de contingência. ${error.message}`
       });
@@ -653,6 +661,15 @@ class Orchestrator {
   async executeMission(mission) {
     mission.plan = await this.planMission(mission);
     if (mission.canceled) return;
+
+    if (mission.codexUsageLimited) {
+      mission.status = "blocked";
+      mission.error = "O limite de uso do Codex foi atingido. O squad não foi iniciado.";
+      mission.summary = mission.error;
+      mission.finishedAt = new Date().toISOString();
+      this.emitMission("mission:blocked", mission, { message: mission.error });
+      return;
+    }
 
     mission.status = "preparing";
     this.emitMission("mission:plan", mission, { plan: mission.plan });
