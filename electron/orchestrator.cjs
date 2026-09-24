@@ -156,7 +156,7 @@ class Orchestrator {
     }
   }
 
-  buildExecArgs(prompt, { fullAuto = false, resumeSessionId = null } = {}) {
+  buildExecArgs(prompt, { fullAuto = false, resumeSessionId = null, images = [] } = {}) {
     const args = [];
 
     if (fullAuto) {
@@ -177,6 +177,10 @@ class Orchestrator {
 
     if (resumeSessionId) {
       args.push("resume", resumeSessionId);
+    }
+
+    for (const imagePath of images) {
+      args.push("-i", imagePath);
     }
 
     args.push(prompt);
@@ -693,7 +697,13 @@ class Orchestrator {
       const workspace = mission.agentWorkspaces[index];
       const stagedAttachments = this.stageAttachments(mission, workspace, task);
       const prompt = this.buildAgentPrompt(mission, task, workspace, stagedAttachments);
-      const args = this.buildExecArgs(prompt, { fullAuto: mission.autoEdit });
+      const imagePaths = stagedAttachments
+        .map((item) => item.path)
+        .filter((filePath) => /\.(png|jpe?g|webp|gif)$/i.test(filePath));
+      const args = this.buildExecArgs(prompt, {
+        fullAuto: mission.autoEdit,
+        images: imagePaths
+      });
 
       const agent = this.terminalManager.create({
         title: `${index + 1}. ${task.role}`,
