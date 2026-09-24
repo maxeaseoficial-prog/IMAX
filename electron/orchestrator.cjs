@@ -543,6 +543,113 @@ class Orchestrator {
     return this.snapshot(mission);
   }
 
+  sendAgentInstruction(agentId, text) {
+    const instruction = String(text || "").trim();
+    if (!instruction) throw new Error("Digite uma instrução para o agente.");
+
+    const runtime = this.agentRuns.get(agentId);
+    if (!runtime || runtime.closed || runtime.mission.canceled) {
+      throw new Error("Este agente não está mais aceitando novas instruções.");
+    }
+
+    runtime.queue.push(instruction);
+    const position = runtime.queue.length;
+
+    this.terminalManager.inject(
+      agentId,
+      `\r\n\x1b[36m[IMx] instrução adicional recebida · fila ${position}\x1b[0m\r\n`
+    );
+
+    this.emitMission("mission:agent-command", runtime.mission, {
+      agentId,
+      queued: position,
+      message: instruction
+    });
+
+    return { queued: true, position };
+  }
+
+  async waitForAgentTurns(mission, task, workspace, agent) {
+    const runtime = {
+      mission,
+      task,
+      workspace,
+      agent,
+      queue: [],
+      sessionId: null,
+      running: true,
+      closed: false
+    };
+
+    this.agentRuns.set(agent.id, runtime);
+
+    let finalExit = await this.terminalManager.waitForExit(agent.id);
+    let output = this.terminalManager.getBuffer(agent.id);
+    runtime.sessionId = parseSessionId(output);
+    runtime.running = false;
+
+    while (!mission.canceled && finalExit.status === "done") {
+      if (runtime.queue.length === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        if (runtime.queue.length === 0) break;
+      }
+
+      const instruction = runtime.queue.shift();
+      const followUpPrompt = [
+        "INSTRUÇÃO ADICIONAL DO USUÁRIO PARA ESTE MESMO AGENTE:",
+        instruction,
+        "",
+        `Continue atuando como ${task.role} na mesma tarefa da missão.`,
+        "Considere o trabalho já realizado neste workspace.",
+        "Aplique a instrução, valide o que for relevante e depois resuma o que mudou.",
+        "Não faça push, release ou deploy."
+      ].join("\n");
+
+      this.terminalManager.inject(
+        agent.id,
+        `\r\n\x1b[34m[IMx] iniciando instrução adicional…\x1b[0m\r\n`
+      );
+
+      const args = this.buildExecArgs(followUpPrompt, {
+        fullAuto: mission.autoEdit,
+        resumeSessionId: runtime.sessionId
+      });
+
+      runtime.running = true;
+
+      this.terminalManager.create({
+        id: agent.id,
+        title: agent.title,
+        role: agent.role,
+        kind: "mission",
+        cwd: workspace.cwd,
+        command: this.codexPath,
+        args,
+        interactive: false,
+        missionId: mission.id
+      });
+
+      this.emitMission("mission:agent-command-started", mission, {
+        agentId: agent.id,
+        message: instruction
+      });
+
+      finalExit = await this.terminalManager.waitForExit(agent.id);
+      output = this.terminalManager.getBuffer(agent.id);
+      runtime.sessionId = parseSessionId(output) || runtime.sessionId;
+      runtime.running = false;
+    }
+
+    runtime.closed = true;
+    this.agentRuns.delete(agent.id);
+
+    return {
+      exit: finalExit,
+      sessionId: runtime.sessionId,
+      output
+    };
+  }
+
   async executeMission(mission) {
     mission.plan = await this.planMission(mission);
     if (mission.canceled) return;
@@ -558,9 +665,9 @@ class Orchestrator {
 
     const runs = mission.plan.tasks.map(async (task, index) => {
       const workspace = mission.agentWorkspaces[index];
-      const args = ["exec"];
-      if (mission.autoEdit) args.push("--full-auto");
-      args.push(this.buildAgentPrompt(mission, task, workspace));
+      const stagedAttachments = this.stageAttachments(mission, workspace, task);
+      const prompt = this.buildAgentPrompt(mission, task, workspace, stagedAttachments);
+      const args = this.buildExecArgs(prompt, { fullAuto: mission.autoEdit });
 
       const agent = this.terminalManager.create({
         title: `${index + 1}. ${task.role}`,
@@ -576,18 +683,60 @@ class Orchestrator {
       mission.agents.push({ ...agent, taskId: task.id, branch: workspace.branch });
       this.emitMission("mission:agent", mission, { agent, task, branch: workspace.branch });
 
-      const exit = await this.terminalManager.waitForExit(agent.id);
-      const commit = await this.commitAgentWork(mission, workspace, task).catch((error) => ({
-        changed: false,
-        branch: workspace.branch,
-        error: error.message
-      }));
+      const turnResult = await this.waitForAgentTurns(mission, task, workspace, agent);
 
-      return { task, workspace, agent, exit, commit };
+      this.cleanupAttachments(stagedAttachments);
+
+      const commit = turnResult.exit.status === "done"
+        ? await this.commitAgentWork(mission, workspace, task).catch((error) => ({
+            changed: false,
+            branch: workspace.branch,
+            error: error.message
+          }))
+        : {
+            changed: false,
+            branch: workspace.branch
+          };
+
+      return {
+        task,
+        workspace,
+        agent,
+        exit: turnResult.exit,
+        sessionId: turnResult.sessionId,
+        output: turnResult.output,
+        usageLimited: hasUsageLimit(turnResult.output),
+        commit
+      };
     });
 
     const results = await Promise.all(runs);
     if (mission.canceled) return;
+
+    const successful = results.filter((item) => item.exit.status === "done");
+    if (successful.length === 0) {
+      const usageLimited = results.some((item) => item.usageLimited);
+
+      mission.status = usageLimited ? "blocked" : "error";
+      mission.error = usageLimited
+        ? "O limite de uso do Codex foi atingido. Nenhum agente conseguiu concluir a missão."
+        : "Nenhum agente conseguiu concluir a missão.";
+      mission.summary = mission.error;
+      mission.finishedAt = new Date().toISOString();
+
+      this.emitMission(
+        usageLimited ? "mission:blocked" : "mission:error",
+        mission,
+        { message: mission.error, results }
+      );
+      return;
+    }
+
+    if (successful.length < results.length) {
+      this.emitMission("mission:warning", mission, {
+        message: `${successful.length}/${results.length} agentes concluíram. O IMx continuará apenas com os resultados válidos.`
+      });
+    }
 
     await this.mergeAgentBranches(mission, results);
     if (mission.canceled) return;
