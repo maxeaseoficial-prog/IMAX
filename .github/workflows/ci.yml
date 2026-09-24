@@ -1,0 +1,27 @@
+name: IMx MVP CI
+
+on:
+  push:
+    branches:
+      - feat/imx-mvp
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install JS dependencies without native postinstall
+        run: npm install --ignore-scripts
+      - name: Check Electron main-process syntax
+        run: |
+          node --check electron/main.cjs
+          node --check electron/preload.cjs
+          node --check electron/state.cjs
+          node --check electron/terminal-manager.cjs
+          node --check electron/orchestrator.cjs
+      - name: Build renderer
+        run: npm run build
