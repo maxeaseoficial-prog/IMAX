@@ -119,6 +119,28 @@ function registerIpc() {
     return result.filePaths[0];
   });
 
+  ipcMain.handle("attachments:choose", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Anexar arquivos à missão",
+      properties: ["openFile", "multiSelections"]
+    });
+
+    if (result.canceled) return [];
+
+    return result.filePaths.slice(0, 20).map((filePath) => {
+      let size = 0;
+      try {
+        size = fs.statSync(filePath).size;
+      } catch {}
+
+      return {
+        path: filePath,
+        name: path.basename(filePath),
+        size
+      };
+    });
+  });
+
   ipcMain.handle("settings:get", () => state.getSettings());
   ipcMain.handle("settings:set", (_event, patch) => state.setSettings(patch || {}));
   ipcMain.handle("missions:list", () => state.listMissions());
@@ -154,6 +176,9 @@ function registerIpc() {
   });
 
   ipcMain.handle("mission:cancel", (_event, missionId) => orchestrator.cancelMission(missionId));
+  ipcMain.handle("mission:agent-instruction", (_event, { agentId, text }) =>
+    orchestrator.sendAgentInstruction(agentId, text)
+  );
 
   ipcMain.handle("path:open", async (_event, targetPath) => {
     if (!targetPath || !fs.existsSync(targetPath)) return false;
