@@ -97,6 +97,7 @@ declare global {
       setSettings(patch: Partial<Settings>): Promise<Settings>;
       listMissions(): Promise<Mission[]>;
       listTerminals(): Promise<AgentMeta[]>;
+      getTerminalBuffer(id: string): Promise<string>;
 
       createTerminal(input: {
         kind: "shell" | "codex";
