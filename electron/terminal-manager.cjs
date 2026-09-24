@@ -18,6 +18,7 @@ class TerminalManager extends EventEmitter {
     this.baseEnv = baseEnv;
     this.sessions = new Map();
     this.lastExits = new Map();
+    this.lastBuffers = new Map();
     fs.mkdirSync(this.logsDir, { recursive: true });
   }
 
@@ -75,11 +76,12 @@ class TerminalManager extends EventEmitter {
       resolveExit = resolve;
     });
 
-    const session = { proc, meta, log, logPath, exitPromise, resolveExit };
+    const session = { proc, meta, log, logPath, exitPromise, resolveExit, buffer: "" };
     this.sessions.set(id, session);
     this.emit("created", { ...meta, logPath });
 
     proc.onData((data) => {
+      session.buffer = (session.buffer + data).slice(-120000);
       try {
         log.write(data);
       } catch {}
@@ -91,6 +93,7 @@ class TerminalManager extends EventEmitter {
       meta.status = status;
       const payload = { id, exitCode, signal, status, missionId: meta.missionId };
       this.lastExits.set(id, payload);
+      this.lastBuffers.set(id, session.buffer);
       this.emit("status", { ...meta });
       this.emit("exit", payload);
       resolveExit(payload);
@@ -108,6 +111,12 @@ class TerminalManager extends EventEmitter {
       ...meta,
       logPath
     }));
+  }
+
+  getBuffer(id) {
+    const session = this.sessions.get(id);
+    if (session) return session.buffer;
+    return this.lastBuffers.get(id) || "";
   }
 
   write(id, data) {
