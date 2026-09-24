@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("imx", {
   setSettings: (patch) => ipcRenderer.invoke("settings:set", patch),
   listMissions: () => ipcRenderer.invoke("missions:list"),
   listTerminals: () => ipcRenderer.invoke("terminal:list"),
+  getTerminalBuffer: (id) => ipcRenderer.invoke("terminal:buffer", id),
 
   createTerminal: (input) => ipcRenderer.invoke("terminal:create", input),
   writeTerminal: (id, data) => ipcRenderer.invoke("terminal:write", { id, data }),
