@@ -73,10 +73,14 @@ class Orchestrator {
   }
 
   emitMission(type, mission, extra = {}) {
+    const missionView = type === "mission:pilot-output"
+      ? JSON.parse(JSON.stringify(mission))
+      : this.snapshot(mission);
+
     const payload = {
       type,
       missionId: mission.id,
-      mission: this.snapshot(mission),
+      mission: missionView,
       ...extra
     };
     this.emit(payload);
@@ -355,6 +359,12 @@ class Orchestrator {
     this.emitMission("mission:status", mission);
 
     for (const result of results) {
+      if (result.exit.status !== "done") {
+        this.emitMission("mission:warning", mission, {
+          message: `${result.task.role} encerrou com erro e não será integrado automaticamente.`
+        });
+        continue;
+      }
       if (!result.commit?.changed || !result.commit.branch) continue;
       try {
         await this.git([
