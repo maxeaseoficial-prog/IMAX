@@ -27,3 +27,8 @@ IMx is a local Electron desktop cockpit for coordinating multiple Codex agents.
 For site and interface tasks, use the guidelines in `electron/ui-reference-guidelines.cjs`.
 The preferred sources are https://reactbits.dev/, https://21st.dev/ and https://uiverse.io/.
 Inspect available source code, adapt it to the project's stack and branding, and verify each component's license and dependencies. If browsing is unavailable, disclose it and implement an original alternative. Do not claim extraction without accessing the source. User instructions take precedence.
+
+
+## Website art direction
+
+For website, landing-page, redesign and web UI tasks, use `electron/web-design-guidelines.cjs`. The original reference is `docs/web-design-master.md`. Brand, audience and commercial clarity precede components; do not impose the IMx cockpit palette on customer sites. Preserve existing content and authorized scope. Report visual checks actually performed and remaining limitations. Backend-only tasks do not require visual redesign.

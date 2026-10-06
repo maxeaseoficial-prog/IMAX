@@ -1,5 +1,6 @@
 const { missionMetrics } = require("./mission-metrics.cjs");
 const { UI_REFERENCE_GUIDELINES } = require("./ui-reference-guidelines.cjs");
+const { WEB_DESIGN_GUIDELINES } = require("./web-design-guidelines.cjs");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -314,6 +315,7 @@ class Orchestrator {
       "Você é o PILOTO do IMx, um orquestrador de agentes de desenvolvimento.",
       "Sua função é decompor a missão em tarefas realmente paralelizáveis, com o mínimo possível de sobreposição de arquivos.",
       UI_REFERENCE_GUIDELINES,
+      WEB_DESIGN_GUIDELINES,
       `Missão do usuário: ${this.planningBrief(mission)}`,
       `Número exato de agentes: ${mission.agentCount}`,
       "",
@@ -467,6 +469,7 @@ class Orchestrator {
       `Sua tarefa exclusiva: ${task.title}`,
       `Instruções: ${task.instructions}`,
       UI_REFERENCE_GUIDELINES,
+      WEB_DESIGN_GUIDELINES,
       ...attachmentLines,
       "",
       "REGRAS:",
@@ -575,6 +578,7 @@ class Orchestrator {
     const prompt = [
       "Você é o PILOTO do IMx em modo de revisão final.",
       "Somente inspecione o projeto. Não altere arquivos.",
+      WEB_DESIGN_GUIDELINES,
       `Missão original e pedido atual: ${this.planningBrief(mission)}`,
       "Resultados dos agentes:",
       statuses,
@@ -701,6 +705,7 @@ class Orchestrator {
       const followUpPrompt = [
         "INSTRUÇÃO ADICIONAL DO USUÁRIO PARA ESTE MESMO AGENTE:",
         UI_REFERENCE_GUIDELINES,
+        WEB_DESIGN_GUIDELINES,
         instruction,
         "",
         `Missão geral: ${this.planningBrief(mission)}`,

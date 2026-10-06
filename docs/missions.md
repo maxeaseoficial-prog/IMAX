@@ -22,6 +22,7 @@ node tests/main-ipc.cjs
 node tests/codex-workspaces.cjs
 node tests/mission-metrics.cjs
 node tests/mission-completion.cjs
+node tests/web-design-guidelines.cjs
 ```
 
 Os testes usam projetos temporários e não enviam missões ao Codex. A validação de Electron, node-pty e abertura do navegador padrão deve ser feita no desktop local.
@@ -35,3 +36,7 @@ Projetos novos podem começar em pastas sem repositório Git. O IMx passa `--ski
 Ao concluir uma rodada, o cabeçalho fixo mostra o botão azul **Abrir resultado** e a interface informa a conclusão. A parte inferior da entrega mostra o tempo total real da rodada (planejamento, preparação, agentes, integração e revisão), a estimativa de tempo serial e a economia estimada.
 
 A comparação soma as durações medidas das tarefas e mantém o restante do tempo da rodada; a economia corresponde à sobreposição entre tarefas. Não é um benchmark de um único agente, que pode executar o trabalho de outra maneira. Com apenas um agente ou tarefas sem sobreposição, a economia estimada é zero. Dados históricos insuficientes aparecem como não disponíveis. Cada novo pedido reinicia a medição; o tempo de criação do projeto não é contado como tempo da rodada.
+
+## Direção de arte dos sites
+
+O PILOTO, os agentes, as instruções adicionais e a revisão final recebem diretrizes resumidas do prompt-mestre de Henrique, em `electron/web-design-guidelines.cjs`. A referência completa está em `docs/web-design-master.md`. As regras se aplicam às tarefas de web/UI; o briefing e o escopo explícitos prevalecem. Não impõem a identidade do IMx aos sites. A revisão final permanece somente leitura, e os agentes devem declarar limitações de QA visual.
