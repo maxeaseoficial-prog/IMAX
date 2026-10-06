@@ -1,3 +1,4 @@
+const { missionMetrics } = require("./mission-metrics.cjs");
 const { UI_REFERENCE_GUIDELINES } = require("./ui-reference-guidelines.cjs");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -612,6 +613,9 @@ class Orchestrator {
     mission.brief = mission.brief || instruction;
     mission.name = mission.name || instruction.slice(0, 80);
     mission.currentRequest = instruction;
+    mission.startedAt = now;
+    mission.metrics = null;
+    mission.agentTimings = [];
     mission.executionCwd = executionCwd;
     mission.previousSummary = mission.summary || "";
     mission.messages = mission.messages || [{ id: crypto.randomUUID(), role: "user", text: mission.brief, createdAt: mission.createdAt }];
@@ -775,6 +779,7 @@ class Orchestrator {
     this.emitMission("mission:status", mission);
 
     const runs = mission.plan.tasks.map(async (task, index) => {
+      const startedAtMs = Date.now();
       const workspace = mission.agentWorkspaces[index];
       const stagedAttachments = this.stageAttachments(mission, workspace, task);
       const prompt = this.buildAgentPrompt(mission, task, workspace, stagedAttachments);
@@ -815,6 +820,7 @@ class Orchestrator {
             branch: workspace.branch
           };
 
+      mission.agentTimings.push({ taskId: task.id, startedAtMs, finishedAtMs: Date.now() });
       return {
         task,
         workspace,
@@ -865,6 +871,7 @@ class Orchestrator {
     mission.messages.push({ id: crypto.randomUUID(), role: "assistant", text: mission.summary || "Entrega concluída. Envie os próximos ajustes neste chat.", createdAt: new Date().toISOString() });
     mission.status = "done";
     mission.finishedAt = new Date().toISOString();
+    mission.metrics = missionMetrics(mission.startedAt, mission.finishedAt, mission.agentTimings);
     this.emitMission("mission:completed", mission, { results });
   }
 

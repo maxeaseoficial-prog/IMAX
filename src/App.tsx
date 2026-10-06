@@ -12,6 +12,21 @@ import type {
 
 const ACTIVE_STATUSES = new Set(["planning", "preparing", "running", "integrating", "reviewing"]);
 
+function formatDuration(ms: number) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}min ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}min`;
+}
+
+function completedDuration(mission: Mission) {
+  if (mission.metrics) return mission.metrics.elapsedMs;
+  const start = mission.startedAt || ((mission.round || 1) <= 1 ? mission.createdAt : "");
+  const elapsed = Date.parse(mission.finishedAt || "") - Date.parse(start);
+  return Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : null;
+}
+
 function upsertAgent(list: AgentMeta[], next: AgentMeta) {
   const index = list.findIndex((item) => item.id === next.id);
   if (index === -1) return [...list, next];
@@ -626,6 +641,11 @@ export default function App() {
           </div>
 
           <div className="topbar-actions">
+            {mission?.status === "done" ? (
+            <button className="primary-button preview-button" disabled={previewBusy} onClick={() => void openPreview()}>
+              {previewBusy ? "Abrindo prévia…" : "Abrir resultado"}
+            </button>
+            ) : null}
             <button className="secondary-button" onClick={() => void createManual("shell")}>
               + Terminal
             </button>
@@ -634,6 +654,15 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {mission?.status === "done" ? (
+          <section className="completion-banner" aria-label="Resultado da missão">
+            <div role="status">
+              <strong>Missão concluída</strong>
+              <span>{mission.name || "Seu projeto"} · resultado pronto para visualizar</span>
+            </div>
+          </section>
+        ) : null}
 
         <section className="pilot-card">
           <div className="pilot-card__top">
@@ -774,12 +803,17 @@ export default function App() {
                 <strong>{mission.integrationBranch || "workspace atualizado"}</strong>
                 <p>{mission.summary || "Missão concluída."}</p>
               </div>
-              {mission.resultPath ? (
-                <button className="secondary-button secondary-button--blue" disabled={previewBusy} onClick={() => void openPreview()}>
-                  {previewBusy ? "Abrindo prévia…" : "Abrir resultado"}
-                </button>
-              ) : null}
+
             </div>
+          ) : null}
+
+          {mission?.status === "done" ? (
+            <section className="mission-performance" aria-label="Tempo da construção">
+              <div><span>Tempo da construção</span><strong>{completedDuration(mission) === null ? "Não registrado" : formatDuration(completedDuration(mission)!)}</strong></div>
+              <div><span>Com um agente · estimativa</span><strong>{mission.metrics?.estimatedSerialMs == null ? "Não disponível" : formatDuration(mission.metrics.estimatedSerialMs)}</strong></div>
+              <div><span>Tempo economizado · estimativa</span><strong>{mission.metrics?.estimatedSavedMs == null ? "Não disponível" : formatDuration(mission.metrics.estimatedSavedMs)}</strong></div>
+              <p>Estimativa baseada na duração das tarefas executadas em paralelo, mantendo o tempo de planejamento, integração e revisão. Uma execução real com um agente pode ter outro tempo.{mission.metrics?.agentCount === 1 ? " Nesta rodada foi usado apenas um agente." : ""}</p>
+            </section>
           ) : null}
 
           {mission && (mission.status === "error" || mission.status === "blocked") ? (

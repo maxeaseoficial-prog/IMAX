@@ -20,6 +20,8 @@ npm run build
 node tests/projects.cjs
 node tests/main-ipc.cjs
 node tests/codex-workspaces.cjs
+node tests/mission-metrics.cjs
+node tests/mission-completion.cjs
 ```
 
 Os testes usam projetos temporários e não enviam missões ao Codex. A validação de Electron, node-pty e abertura do navegador padrão deve ser feita no desktop local.
@@ -27,3 +29,9 @@ Os testes usam projetos temporários e não enviam missões ao Codex. A validaç
 ## Pastas sem Git
 
 Projetos novos podem começar em pastas sem repositório Git. O IMx passa `--skip-git-repo-check` ao planejamento, aos agentes e à retomada de execuções nas pastas selecionadas para a missão. Isso evita a recusa `Not inside a trusted directory`; não desativa o sandbox nem altera a política de aprovação. Sem Git, os agentes usam o modo de workspace compartilhado existente.
+
+## Conclusão e tempos
+
+Ao concluir uma rodada, o cabeçalho fixo mostra o botão azul **Abrir resultado** e a interface informa a conclusão. A parte inferior da entrega mostra o tempo total real da rodada (planejamento, preparação, agentes, integração e revisão), a estimativa de tempo serial e a economia estimada.
+
+A comparação soma as durações medidas das tarefas e mantém o restante do tempo da rodada; a economia corresponde à sobreposição entre tarefas. Não é um benchmark de um único agente, que pode executar o trabalho de outra maneira. Com apenas um agente ou tarefas sem sobreposição, a economia estimada é zero. Dados históricos insuficientes aparecem como não disponíveis. Cada novo pedido reinicia a medição; o tempo de criação do projeto não é contado como tempo da rodada.

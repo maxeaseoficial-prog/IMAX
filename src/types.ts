@@ -57,6 +57,8 @@ export interface Mission {
   createdAt: string;
   updatedAt?: string;
   finishedAt?: string;
+  startedAt?: string;
+  metrics?: { elapsedMs: number; estimatedSerialMs: number | null; estimatedSavedMs: number | null; agentCount: number } | null;
   plan?: MissionPlan | null;
   agents?: AgentMeta[];
   attachments?: Attachment[];
