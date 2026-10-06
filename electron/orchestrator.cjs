@@ -1,3 +1,4 @@
+const { UI_REFERENCE_GUIDELINES } = require("./ui-reference-guidelines.cjs");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -244,6 +245,7 @@ class Orchestrator {
     const prompt = [
       "Você é o PILOTO do IMx, um orquestrador de agentes de desenvolvimento.",
       "Sua função é decompor a missão em tarefas realmente paralelizáveis, com o mínimo possível de sobreposição de arquivos.",
+      UI_REFERENCE_GUIDELINES,
       `Missão do usuário: ${mission.brief}`,
       `Número exato de agentes: ${mission.agentCount}`,
       "",
@@ -395,6 +397,7 @@ class Orchestrator {
       `Missão geral: ${mission.brief}`,
       `Sua tarefa exclusiva: ${task.title}`,
       `Instruções: ${task.instructions}`,
+      UI_REFERENCE_GUIDELINES,
       ...attachmentLines,
       "",
       "REGRAS:",
@@ -616,6 +619,7 @@ class Orchestrator {
       const instruction = runtime.queue.shift();
       const followUpPrompt = [
         "INSTRUÇÃO ADICIONAL DO USUÁRIO PARA ESTE MESMO AGENTE:",
+        UI_REFERENCE_GUIDELINES,
         instruction,
         "",
         `Missão geral: ${mission.brief}`,

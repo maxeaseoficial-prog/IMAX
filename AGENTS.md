@@ -21,3 +21,9 @@ IMx is a local Electron desktop cockpit for coordinating multiple Codex agents.
 - xterm.js renders terminal panes.
 - node-pty provides real local PTYs.
 - Squad planning uses local `codex exec`; mission agents run in parallel.
+
+## UI reference sources
+
+For site and interface tasks, use the guidelines in `electron/ui-reference-guidelines.cjs`.
+The preferred sources are https://reactbits.dev/, https://21st.dev/ and https://uiverse.io/.
+Inspect available source code, adapt it to the project's stack and branding, and verify each component's license and dependencies. If browsing is unavailable, disclose it and implement an original alternative. Do not claim extraction without accessing the source. User instructions take precedence.
