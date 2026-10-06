@@ -41,6 +41,16 @@ class AppState {
     return readJson(this.missionsFile, []);
   }
 
+  getMission(id) {
+    return this.listMissions().find((mission) => mission.id === id) || null;
+  }
+
+  deleteMission(id) {
+    const history = this.listMissions();
+    writeJson(this.missionsFile, history.filter((mission) => mission.id !== id));
+    return history.some((mission) => mission.id === id);
+  }
+
   upsertMission(mission) {
     const history = this.listMissions();
     const safeMission = JSON.parse(JSON.stringify(mission));
@@ -52,9 +62,7 @@ class AppState {
       history.unshift(safeMission);
     }
 
-    const trimmed = history
-      .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
-      .slice(0, 50);
+    const trimmed = history.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
 
     writeJson(this.missionsFile, trimmed);
     return safeMission;

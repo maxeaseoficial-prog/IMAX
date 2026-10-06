@@ -46,6 +46,10 @@ export interface MissionPlan {
 export interface Mission {
   id: string;
   brief: string;
+  name?: string;
+  round?: number;
+  currentRequest?: string;
+  messages?: { id: string; role: "user" | "assistant"; text: string; createdAt: string }[];
   cwd: string;
   agentCount: number;
   autoEdit: boolean;
@@ -104,11 +108,16 @@ declare global {
       getSettings(): Promise<Settings>;
       setSettings(patch: Partial<Settings>): Promise<Settings>;
       listMissions(): Promise<Mission[]>;
+      createMission(input: { name: string; cwd: string; agentCount: number; autoEdit: boolean }): Promise<Mission>;
+      renameMission(id: string, name: string): Promise<Mission>;
+      deleteMission(id: string): Promise<boolean>;
+      openMissionPreview(id: string): Promise<{ url: string }>;
       listTerminals(): Promise<AgentMeta[]>;
       getTerminalBuffer(id: string): Promise<string>;
 
       createTerminal(input: {
         kind: "shell" | "codex";
+        missionId?: string;
         cwd: string;
         title?: string;
         role?: string;
@@ -118,6 +127,7 @@ declare global {
       killTerminal(id: string): Promise<boolean>;
 
       startMission(input: {
+        missionId?: string;
         brief: string;
         cwd: string;
         agentCount: number;
@@ -147,3 +157,4 @@ declare global {
 }
 
 export {};
+

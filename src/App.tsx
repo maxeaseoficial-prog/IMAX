@@ -22,6 +22,8 @@ function upsertAgent(list: AgentMeta[], next: AgentMeta) {
 
 function missionStatusLabel(status?: string) {
   const labels: Record<string, string> = {
+    draft: "NOVA MISSÃO",
+    interrupted: "INTERROMPIDA",
     planning: "PLANEJANDO",
     preparing: "PREPARANDO",
     running: "EM EXECUÇÃO",
@@ -245,11 +247,63 @@ export default function App() {
   const [pilotLog, setPilotLog] = useState("");
   const [notice, setNotice] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const selectedMissionId = useRef<string | null>(null);
+  const drafts = useRef(new Map<string, { brief: string; attachments: Attachment[] }>());
+  const currentDraft = useRef({ brief, attachments });
+  currentDraft.current = { brief, attachments };
+  const [pilotLogs, setPilotLogs] = useState<Record<string, string>>({});
+  const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [modal, setModal] = useState<{ type: "new" | "rename" | "delete"; id?: string } | null>(null);
+  const [missionName, setMissionName] = useState("");
+  const [missionFolder, setMissionFolder] = useState("");
+  const [modalError, setModalError] = useState("");
+  const [modalBusy, setModalBusy] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const workspace = mission?.cwd || settings.workspace;
+
+  const selectMission = (next: Mission | null) => {
+    drafts.current.set(selectedMissionId.current || "new", currentDraft.current);
+    selectedMissionId.current = next?.id || null;
+    const draft = drafts.current.get(next?.id || "new");
+    setMission(next);
+    if (next) setSettings((current) => ({ ...current, agentCount: next.agentCount, autoEdit: next.autoEdit }));
+    setBrief(draft?.brief || "");
+    setAttachments(draft?.attachments || []);
+    setPilotLog("");
+    setNotice("");
+    setContextMenu(null);
+  };
+
+  const showModal = (type: "new" | "rename" | "delete", id?: string) => {
+    const existing = history.find((item) => item.id === id);
+    setMissionName(type === "new" ? "" : existing?.name || existing?.brief.slice(0, 80) || "Missão");
+    setMissionFolder("");
+    setModalError("");
+    setContextMenu(null);
+    setModal({ type, id });
+  };
+
+  useEffect(() => {
+    const dismiss = () => setContextMenu(null);
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setContextMenu(null); if (!modalBusy) setModal(null); }
+    };
+    window.addEventListener("click", dismiss);
+    window.addEventListener("keydown", escape);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("scroll", dismiss, true);
+    return () => {
+      window.removeEventListener("click", dismiss);
+      window.removeEventListener("keydown", escape);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("scroll", dismiss, true);
+    };
+  }, [modalBusy]);
 
   const activeMission = Boolean(mission && ACTIVE_STATUSES.has(mission.status));
 
   const missionAgents = useMemo(() => {
-    if (!mission) return agents;
+    if (!mission) return agents.filter((agent) => !agent.missionId);
     const scoped = agents.filter((agent) => agent.missionId === mission.id);
     const manual = agents.filter((agent) => !agent.missionId);
     return [...scoped, ...manual];
@@ -296,34 +350,15 @@ export default function App() {
     });
 
     const offMission = window.imx.onMissionEvent((event: MissionEvent) => {
-      setMission(event.mission);
-
+      if (event.type !== "mission:pilot-output") {
+        setHistory((current) => [event.mission, ...current.filter((item) => item.id !== event.missionId)]);
+      }
       if (event.type === "mission:pilot-output" && event.data) {
-        setPilotLog((current) => {
-          const next = current + event.data;
-          return next.length > 50000 ? next.slice(-50000) : next;
-        });
+        setPilotLogs((current) => ({ ...current, [event.missionId]: ((current[event.missionId] || "") + event.data).slice(-50000) }));
       }
-
-      if (event.type === "mission:warning" && event.message) {
-        setNotice(event.message);
-      }
-
-      if (
-        (event.type === "mission:error" || event.type === "mission:blocked") &&
-        event.message
-      ) {
-        setNotice(event.message);
-      }
-
-      if (
-        event.type === "mission:completed" ||
-        event.type === "mission:canceled" ||
-        event.type === "mission:error" ||
-        event.type === "mission:blocked"
-      ) {
-        void refreshHistory();
-      }
+      if (selectedMissionId.current !== event.missionId) return;
+      setMission(event.mission);
+      if (["mission:warning", "mission:error", "mission:blocked"].includes(event.type) && event.message) setNotice(event.message);
     });
 
     return () => {
@@ -355,6 +390,7 @@ export default function App() {
   };
 
   const chooseWorkspace = async () => {
+    if (mission) { setNotice("A pasta pertence a esta missão. Use Nova missão para trabalhar em outro projeto."); return; }
     const selected = await window.imx.chooseWorkspace();
     if (selected) {
       await persistSettings({ workspace: selected });
@@ -383,7 +419,7 @@ export default function App() {
       return;
     }
 
-    if (!settings.workspace) {
+    if (!workspace) {
       setNotice("Escolha um workspace antes de iniciar.");
       return;
     }
@@ -396,17 +432,24 @@ export default function App() {
     setBusy(true);
     setNotice("");
     setPilotLog("");
-    setAgents((current) => current.filter((agent) => !agent.missionId));
+    setAgents((current) => current.filter((agent) => agent.missionId !== mission?.id || agent.kind !== "mission"));
 
     try {
       const created = await window.imx.startMission({
+        missionId: mission?.id,
         brief: brief.trim(),
-        cwd: settings.workspace,
+        cwd: workspace,
         agentCount: settings.agentCount,
         autoEdit: settings.autoEdit,
         attachments
       });
+      selectedMissionId.current = created.id;
       setMission(created);
+      setHistory((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      drafts.current.delete(created.id);
+      drafts.current.delete("new");
+      setBrief("");
+      setAttachments([]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     } finally {
@@ -420,7 +463,7 @@ export default function App() {
   };
 
   const createManual = async (kind: "shell" | "codex") => {
-    let cwd = settings.workspace;
+    let cwd = mission?.resultPath || workspace;
     if (!cwd) {
       const selected = await window.imx.chooseWorkspace();
       if (!selected) return;
@@ -432,6 +475,7 @@ export default function App() {
       await window.imx.createTerminal({
         kind,
         cwd,
+        missionId: mission?.id,
         title: kind === "codex" ? "Codex manual" : "Terminal manual",
         role: kind === "codex" ? "Agente independente" : "Shell"
       });
@@ -439,6 +483,48 @@ export default function App() {
       setNotice(error instanceof Error ? error.message : String(error));
     }
   };
+
+  const submitModal = async () => {
+    if (!modal || modalBusy) return;
+    setModalBusy(true);
+    setModalError("");
+    try {
+      if (modal.type === "new") {
+        if (!missionName.trim() || !missionFolder) throw new Error("Informe o nome e escolha uma pasta exclusiva para o projeto.");
+        const created = await window.imx.createMission({ name: missionName.trim(), cwd: missionFolder, agentCount: settings.agentCount, autoEdit: settings.autoEdit });
+        setHistory((current) => [created, ...current]);
+        selectMission(created);
+      } else if (modal.type === "rename" && modal.id) {
+        const updated = await window.imx.renameMission(modal.id, missionName);
+        setHistory((current) => current.map((item) => item.id === updated.id ? updated : item));
+        if (selectedMissionId.current === updated.id) setMission(updated);
+      } else if (modal.id) {
+        const removed = await window.imx.deleteMission(modal.id);
+        if (!removed) throw new Error("Missão não encontrada.");
+        setHistory((current) => current.filter((item) => item.id !== modal.id));
+        setAgents((current) => current.filter((agent) => agent.missionId !== modal.id));
+        drafts.current.delete(modal.id);
+        setPilotLogs((current) => { const next = { ...current }; delete next[modal.id!]; return next; });
+        if (selectedMissionId.current === modal.id) selectMission(null);
+      }
+      setModal(null);
+    } catch (error) {
+      setModalError(error instanceof Error ? error.message : String(error));
+    } finally { setModalBusy(false); }
+  };
+
+  const openPreview = async () => {
+    if (!mission || previewBusy) return;
+    setPreviewBusy(true);
+    setNotice("Preparando a prévia local. As dependências serão instaladas se necessário…");
+    try {
+      const result = await window.imx.openMissionPreview(mission.id);
+      setNotice("Prévia aberta no navegador: " + result.url);
+    } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
+    finally { setPreviewBusy(false); }
+  };
+
+  const displayedLog = mission ? pilotLogs[mission.id] || "" : pilotLog;
 
   return (
     <div className={`app ${sidebarCollapsed ? "app--sidebar-collapsed" : ""}`}>
@@ -456,8 +542,8 @@ export default function App() {
           <button className="workspace-button" onClick={chooseWorkspace}>
             <span className="workspace-icon">⌂</span>
             <span>
-              <strong>{settings.workspace ? shortPath(settings.workspace) : "Selecionar pasta"}</strong>
-              <small>{settings.workspace || "nenhuma pasta ativa"}</small>
+              <strong>{workspace ? shortPath(workspace) : "Selecionar pasta"}</strong>
+              <small>{workspace || "nenhuma pasta ativa"}</small>
             </span>
           </button>
         </section>
@@ -468,19 +554,33 @@ export default function App() {
             <span>{history.length}</span>
           </div>
 
+          <button className="new-mission-button" onClick={() => showModal("new")}>+ Nova missão</button>
           <div className="history-list">
             {history.length === 0 ? (
               <div className="history-empty">Nenhuma missão ainda.</div>
             ) : (
-              history.slice(0, 12).map((item) => (
+              history.map((item) => (
                 <button
                   key={item.id}
                   className={`history-item ${mission?.id === item.id ? "history-item--active" : ""}`}
-                  onClick={() => setMission(item)}
+                  onClick={() => selectMission(item)}
+                  title={item.name || item.brief || "Nova missão"}
+                  aria-haspopup="menu"
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setContextMenu({ id: item.id, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 120) });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+                      event.preventDefault();
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      setContextMenu({ id: item.id, x: rect.right, y: Math.min(rect.top, window.innerHeight - 120) });
+                    }
+                  }}
                 >
                   <span className={`history-state history-state--${item.status}`} />
                   <span>
-                    <strong>{item.brief}</strong>
+                    <strong>{item.name || item.brief || "Nova missão"}</strong>
                     <small>
                       {item.agentCount} agentes · {missionStatusLabel(item.status)}
                     </small>
@@ -521,7 +621,7 @@ export default function App() {
             </button>
             <div>
             <span className="eyebrow">LOCAL AGENTIC WORKSPACE</span>
-            <h1>Squad Control</h1>
+            <h1>{mission?.name || "Squad Control"}</h1>
             </div>
           </div>
 
@@ -575,12 +675,22 @@ export default function App() {
             </div>
           </div>
 
+          {mission?.messages?.length ? (
+            <div className="mission-chat" aria-label="Conversa da missão">
+              {mission.messages.map((message) => (
+                <div key={message.id} className={`chat-message chat-message--${message.role}`}>
+                  <span>{message.role === "user" ? "VOCÊ" : "PILOTO"}</span>
+                  <p>{message.text}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className="brief-row">
             <div className="brief-composer">
               <textarea
                 value={brief}
                 onChange={(event) => setBrief(event.target.value)}
-                placeholder="Ex.: Construa um site premium para esta loja. Use a identidade atual, crie frontend, backend, assets e valide tudo."
+                placeholder={mission?.brief ? "Descreva os próximos ajustes deste projeto…" : "Descreva o site ou sistema que vamos construir…"}
                 disabled={activeMission}
               />
 
@@ -619,7 +729,7 @@ export default function App() {
               </button>
             ) : (
               <button className="primary-button" disabled={busy} onClick={() => void startMission()}>
-                {busy ? "INICIANDO..." : "INICIAR MISSÃO"}
+                {busy ? "ENVIANDO..." : mission?.brief ? "ENVIAR AJUSTES" : "INICIAR MISSÃO"}
                 <span>→</span>
               </button>
             )}
@@ -647,13 +757,13 @@ export default function App() {
             </div>
           ) : null}
 
-          {pilotLog ? (
+          {displayedLog ? (
             <div className="pilot-console">
               <div className="console-head">
                 <span>PILOTO STREAM</span>
                 <span>{mission?.workspaceMode || "pending"}</span>
               </div>
-              <pre>{pilotLog}</pre>
+              <pre>{displayedLog}</pre>
             </div>
           ) : null}
 
@@ -665,8 +775,8 @@ export default function App() {
                 <p>{mission.summary || "Missão concluída."}</p>
               </div>
               {mission.resultPath ? (
-                <button className="secondary-button secondary-button--blue" onClick={() => void window.imx.openPath(mission.resultPath!)}>
-                  Abrir resultado
+                <button className="secondary-button secondary-button--blue" disabled={previewBusy} onClick={() => void openPreview()}>
+                  {previewBusy ? "Abrindo prévia…" : "Abrir resultado"}
                 </button>
               ) : null}
             </div>
@@ -719,6 +829,37 @@ export default function App() {
           )}
         </section>
       </main>
+      {contextMenu ? (
+        <div className="mission-context-menu" role="menu" aria-label="Opções da missão" style={{ left: contextMenu.x, top: contextMenu.y }}>
+          <button role="menuitem" onClick={() => showModal("rename", contextMenu.id)}>Renomear missão</button>
+          <button role="menuitem" className="menu-danger" onClick={() => showModal("delete", contextMenu.id)}>Excluir missão</button>
+        </div>
+      ) : null}
+      {modal ? (
+        <div className="modal-backdrop">
+          <section className="mission-modal" role="dialog" aria-modal="true" aria-labelledby="mission-modal-title">
+            <h2 id="mission-modal-title">{modal.type === "new" ? "Nova missão" : modal.type === "rename" ? "Renomear missão" : "Excluir missão"}</h2>
+            {modal.type === "delete" ? (
+              <p>Excluir “{missionName}” do histórico? Os arquivos do projeto serão preservados. Se houver uma execução ativa, cancele antes de excluir.</p>
+            ) : (
+              <label>Nome do projeto<input autoFocus value={missionName} maxLength={100} onChange={(event) => setMissionName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submitModal(); }} /></label>
+            )}
+            {modal.type === "new" ? (
+              <div className="mission-folder-picker">
+                <p>Cada site ou sistema deve usar uma pasta própria, fora da pasta do IMx.</p>
+                <button className="secondary-button" onClick={async () => { const folder = await window.imx.chooseWorkspace(); if (folder) setMissionFolder(folder); }}>Escolher ou criar pasta</button>
+                <small>{missionFolder || "Nenhuma pasta selecionada"}</small>
+              </div>
+            ) : null}
+            {modalError ? <p className="notice" role="alert">{modalError}</p> : null}
+            <div className="modal-actions">
+              <button className="secondary-button" disabled={modalBusy} onClick={() => setModal(null)}>Cancelar</button>
+              <button className={modal.type === "delete" ? "danger-button" : "primary-button"} disabled={modalBusy} onClick={() => void submitModal()}>{modalBusy ? "Salvando…" : modal.type === "delete" ? "Excluir do histórico" : "Salvar"}</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
+

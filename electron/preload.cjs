@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld("imx", {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   setSettings: (patch) => ipcRenderer.invoke("settings:set", patch),
   listMissions: () => ipcRenderer.invoke("missions:list"),
+  createMission: (input) => ipcRenderer.invoke("mission:create", input),
+  renameMission: (id, name) => ipcRenderer.invoke("mission:rename", { id, name }),
+  deleteMission: (id) => ipcRenderer.invoke("mission:delete", id),
+  openMissionPreview: (id) => ipcRenderer.invoke("mission:preview", id),
   listTerminals: () => ipcRenderer.invoke("terminal:list"),
   getTerminalBuffer: (id) => ipcRenderer.invoke("terminal:buffer", id),
 
@@ -33,3 +37,4 @@ contextBridge.exposeInMainWorld("imx", {
   onTerminalExit: (callback) => subscribe("terminal:exit", callback),
   onMissionEvent: (callback) => subscribe("mission:event", callback)
 });
+

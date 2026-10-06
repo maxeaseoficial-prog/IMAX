@@ -5,6 +5,7 @@ const { execFile } = require("node:child_process");
 const { TerminalManager } = require("./terminal-manager.cjs");
 const { Orchestrator } = require("./orchestrator.cjs");
 const { AppState } = require("./state.cjs");
+const { PreviewManager } = require("./preview-manager.cjs");
 
 app.setName("IMx");
 
@@ -12,6 +13,7 @@ let mainWindow = null;
 let terminalManager = null;
 let orchestrator = null;
 let state = null;
+let previewManager = null;
 let runtime = {
   baseEnv: { ...process.env },
   codexPath: null,
@@ -63,6 +65,15 @@ function ensureWorkspace(cwd) {
   const stat = fs.statSync(cwd);
   if (!stat.isDirectory()) throw new Error("O workspace precisa ser uma pasta.");
   return cwd;
+}
+
+function ensureProjectWorkspace(cwd) {
+  const selected = fs.realpathSync(ensureWorkspace(cwd));
+  const appRoot = fs.realpathSync(path.join(__dirname, ".."));
+  if (selected === appRoot || selected.startsWith(appRoot + path.sep) || appRoot.startsWith(selected + path.sep)) {
+    throw new Error("Escolha uma pasta do seu projeto fora da pasta do IMx. Isso protege o aplicativo de alterações da missão.");
+  }
+  return selected;
 }
 
 function createWindow() {
@@ -144,6 +155,24 @@ function registerIpc() {
   ipcMain.handle("settings:get", () => state.getSettings());
   ipcMain.handle("settings:set", (_event, patch) => state.setSettings(patch || {}));
   ipcMain.handle("missions:list", () => state.listMissions());
+  ipcMain.handle("mission:create", (_event, input = {}) => {
+    const cwd = ensureProjectWorkspace(input.cwd);
+    return orchestrator.createMission({ ...input, cwd });
+  });
+  ipcMain.handle("mission:rename", (_event, { id, name }) => orchestrator.renameMission(id, name));
+  ipcMain.handle("mission:delete", async (_event, id) => {
+    const removed = orchestrator.deleteMission(id);
+    await previewManager.stop(id);
+    terminalManager.killMission(id);
+    return removed;
+  });
+  ipcMain.handle("mission:preview", async (_event, id) => {
+    const mission = orchestrator.getMission(id);
+    if (!mission) throw new Error("Missão não encontrada.");
+    if (mission.status !== "done") throw new Error("Conclua a missão antes de abrir o resultado.");
+    ensureProjectWorkspace(mission.resultPath || mission.cwd);
+    return previewManager.open(mission);
+  });
   ipcMain.handle("terminal:list", () => terminalManager.list());
   ipcMain.handle("terminal:buffer", (_event, id) => terminalManager.getBuffer(id));
 
@@ -162,7 +191,8 @@ function registerIpc() {
       cwd,
       command: kind === "codex" ? runtime.codexPath : runtime.shell,
       args: kind === "codex" ? [] : ["-l"],
-      interactive: true
+      interactive: true,
+      missionId: input.missionId || null
     });
   });
 
@@ -170,8 +200,10 @@ function registerIpc() {
   ipcMain.handle("terminal:resize", (_event, { id, cols, rows }) => terminalManager.resize(id, cols, rows));
   ipcMain.handle("terminal:kill", (_event, id) => terminalManager.kill(id));
 
-  ipcMain.handle("mission:start", (_event, input = {}) => {
-    const cwd = ensureWorkspace(input.cwd || state.getSettings().workspace);
+  ipcMain.handle("mission:start", async (_event, input = {}) => {
+    const existing = input.missionId ? orchestrator.getMission(input.missionId) : null;
+    const cwd = ensureProjectWorkspace(existing?.resultPath || existing?.cwd || input.cwd || state.getSettings().workspace);
+    if (existing) await previewManager.stop(existing.id);
     return orchestrator.startMission({ ...input, cwd });
   });
 
@@ -207,6 +239,8 @@ app.whenReady().then(async () => {
     emit: (payload) => send("mission:event", payload)
   });
 
+  previewManager = new PreviewManager({ baseEnv: runtime.baseEnv, openExternal: (url) => shell.openExternal(url) });
+
   wireTerminalEvents();
   registerIpc();
   createWindow();
@@ -218,4 +252,15 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+
+let quitting = false;
+app.on("before-quit", (event) => {
+  if (quitting || !previewManager) return;
+  event.preventDefault();
+  quitting = true;
+  for (const mission of orchestrator.missions.values()) orchestrator.cancelMission(mission.id);
+  for (const terminal of terminalManager.list()) terminalManager.kill(terminal.id);
+  previewManager.dispose().finally(() => app.quit());
 });

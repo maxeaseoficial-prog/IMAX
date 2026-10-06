@@ -245,10 +245,78 @@ body {
 }
 
 .history-list {
-  height: calc(100% - 20px);
+  height: calc(100% - 65px);
   margin-top: 10px;
   overflow: auto;
 }
+
+.new-mission-button {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #245071;
+  border-radius: 7px;
+  background: #0a1825;
+  color: #5bc8ff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mission-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 16px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.chat-message {
+  width: min(90%, 860px);
+  padding: 12px 14px;
+  border: 1px solid #203149;
+  border-radius: 10px;
+  background: #09121c;
+}
+
+.chat-message--user { align-self: flex-end; background: #0b2030; }
+.chat-message > span { color: #5bc8ff; font-size: 10px; font-weight: 700; }
+.chat-message p { margin: 7px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; color: #c8d8e9; font-size: 12px; }
+
+.mission-context-menu {
+  position: fixed;
+  z-index: 100;
+  width: 180px;
+  padding: 6px;
+  border: 1px solid #29445d;
+  border-radius: 9px;
+  background: #0b1521;
+  box-shadow: 0 12px 32px #0009;
+}
+
+.mission-context-menu button {
+  display: block;
+  width: 100%;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #dcecff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mission-context-menu button:hover { background: #142c40; }
+.mission-context-menu .menu-danger { color: #ff93a0; }
+.modal-backdrop { position: fixed; z-index: 110; inset: 0; display: grid; place-items: center; padding: 24px; background: #000a; }
+.mission-modal { width: min(480px, 100%); max-height: 90vh; overflow: auto; padding: 24px; border: 1px solid #29445d; border-radius: 14px; background: #09121c; box-shadow: 0 16px 60px #0009; }
+.mission-modal h2 { margin: 0 0 20px; font-size: 20px; color: #e2efff; }
+.mission-modal p, .mission-modal label { color: #acbdd2; font-size: 13px; line-height: 1.55; }
+.mission-modal input { width: 100%; margin-top: 8px; padding: 10px 12px; color: #e2efff; border: 1px solid #29445d; border-radius: 7px; background: #050b12; }
+.mission-folder-picker small { display: block; margin: 12px 0; color: #6e8198; overflow-wrap: anywhere; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+.modal-actions .primary-button, .modal-actions .danger-button { min-height: 38px; padding: 10px 14px; }
 
 .history-item {
   display: grid;

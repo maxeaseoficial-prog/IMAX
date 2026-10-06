@@ -68,6 +68,8 @@ function safeAttachmentName(value) {
     .slice(0, 120) || "arquivo";
 }
 
+const ACTIVE_MISSION_STATUSES = new Set(["planning", "preparing", "running", "integrating", "reviewing"]);
+
 const FALLBACK_ROLES = [
   ["Arquitetura", "Mapeie a solução, contratos entre módulos, riscos e critérios de conclusão. Faça mudanças estruturais somente quando necessárias."],
   ["Frontend", "Implemente a interface, estados, componentes e experiência visual relacionada à missão."],
@@ -90,7 +92,62 @@ class Orchestrator {
     this.missions = new Map();
     this.children = new Map();
     this.agentRuns = new Map();
+    this.executions = new Map();
     fs.mkdirSync(this.worktreesRoot, { recursive: true });
+    for (const mission of this.state.listMissions()) {
+      if (ACTIVE_MISSION_STATUSES.has(mission.status)) {
+        mission.status = "interrupted";
+        mission.error = "A execução anterior foi interrompida ao fechar o aplicativo. Envie uma nova instrução para continuar.";
+        this.state.upsertMission(mission);
+      }
+    }
+  }
+
+  getMission(id) {
+    return this.missions.get(id) || this.state.getMission(id);
+  }
+
+  createMission(input) {
+    if (!input.cwd || !fs.statSync(input.cwd).isDirectory()) throw new Error("Escolha uma pasta para o projeto.");
+    if (this.state.listMissions().some((item) => item.cwd === input.cwd)) {
+      throw new Error("Esta pasta já pertence a uma missão. Abra essa missão para continuar ou escolha outra pasta.");
+    }
+    const now = new Date().toISOString();
+    const mission = {
+      id: crypto.randomUUID(), name: String(input.name || "Nova missão").trim().slice(0, 100),
+      brief: "", cwd: input.cwd, agentCount: clamp(input.agentCount, 1, 8),
+      autoEdit: input.autoEdit !== false, status: "draft", createdAt: now,
+      messages: [], round: 0, agents: [], attachments: [], workspaceMode: "pending"
+    };
+    this.missions.set(mission.id, mission);
+    return this.snapshot(mission);
+  }
+
+  renameMission(id, name) {
+    const mission = this.getMission(id);
+    if (!mission) throw new Error("Missão não encontrada.");
+    const value = String(name || "").trim();
+    if (!value) throw new Error("Digite um nome para a missão.");
+    mission.name = value.slice(0, 100);
+    this.missions.set(id, mission);
+    this.emitMission("mission:renamed", mission);
+    return this.snapshot(mission);
+  }
+
+  deleteMission(id) {
+    const mission = this.getMission(id);
+    if (mission && (ACTIVE_MISSION_STATUSES.has(mission.status) || this.executions.has(id))) {
+      throw new Error("Cancele a execução antes de excluir esta missão.");
+    }
+    this.missions.delete(id);
+    return this.state.deleteMission(id);
+  }
+
+  planningBrief(mission) {
+    return [mission.brief, mission.round > 1 ? "CONTINUAÇÃO DO MESMO PROJETO. Preserve a implementação existente." : "",
+      mission.round > 1 ? "Resumo da última entrega: " + (mission.previousSummary || "Consulte os arquivos atuais.") : "",
+      mission.round > 1 ? "Conversa recente:\n" + (mission.messages || []).slice(-10).map((message) => (message.role === "user" ? "Usuário: " : "PILOTO: ") + message.text).join("\n").slice(-16000) : "",
+      "Pedido atual: " + (mission.currentRequest || mission.brief)].filter(Boolean).join("\n");
   }
 
   snapshot(mission) {
@@ -100,6 +157,12 @@ class Orchestrator {
   }
 
   emitMission(type, mission, extra = {}) {
+    if (["mission:completed", "mission:error", "mission:blocked", "mission:canceled"].includes(type) &&
+        mission.messages?.at(-1)?.role === "user") {
+      mission.messages.push({ id: crypto.randomUUID(), role: "assistant",
+        text: type === "mission:canceled" ? "Execução cancelada. Você pode enviar outro pedido para continuar." : mission.summary || mission.error || extra.message || "Execução encerrada.",
+        createdAt: new Date().toISOString() });
+    }
     const missionView = type === "mission:pilot-output"
       ? JSON.parse(JSON.stringify(mission))
       : this.snapshot(mission);
@@ -246,7 +309,7 @@ class Orchestrator {
       "Você é o PILOTO do IMx, um orquestrador de agentes de desenvolvimento.",
       "Sua função é decompor a missão em tarefas realmente paralelizáveis, com o mínimo possível de sobreposição de arquivos.",
       UI_REFERENCE_GUIDELINES,
-      `Missão do usuário: ${mission.brief}`,
+      `Missão do usuário: ${this.planningBrief(mission)}`,
       `Número exato de agentes: ${mission.agentCount}`,
       "",
       "Retorne SOMENTE JSON válido, sem markdown, exatamente neste formato:",
@@ -266,20 +329,20 @@ class Orchestrator {
 
     try {
       const output = await this.runCodex(prompt, mission.cwd, mission, { fullAuto: false, label: "PILOTO · planejamento" });
-      return this.parsePlan(output, mission.brief, mission.agentCount);
+      return this.parsePlan(output, this.planningBrief(mission), mission.agentCount);
     } catch (error) {
       if (hasUsageLimit(error.message)) {
         mission.codexUsageLimited = true;
         this.emitMission("mission:warning", mission, {
           message: "O limite de uso do Codex foi atingido antes do squad iniciar."
         });
-        return this.fallbackPlan(mission.brief, mission.agentCount);
+        return this.fallbackPlan(this.planningBrief(mission), mission.agentCount);
       }
 
       this.emitMission("mission:warning", mission, {
         message: `O PILOTO não conseguiu gerar o plano via Codex; usando divisão local de contingência. ${error.message}`
       });
-      return this.fallbackPlan(mission.brief, mission.agentCount);
+      return this.fallbackPlan(this.planningBrief(mission), mission.agentCount);
     }
   }
 
@@ -288,32 +351,33 @@ class Orchestrator {
   }
 
   async prepareWorkspaces(mission) {
+    const sourceCwd = mission.executionCwd || mission.cwd;
     try {
-      const inside = await this.git(["rev-parse", "--is-inside-work-tree"], mission.cwd);
+      const inside = await this.git(["rev-parse", "--is-inside-work-tree"], sourceCwd);
       if (inside.stdout.trim() !== "true") throw new Error("não é um repositório Git");
 
-      const dirty = await this.git(["status", "--porcelain"], mission.cwd);
+      const dirty = await this.git(["status", "--porcelain"], sourceCwd);
       if (dirty.stdout.trim()) {
         throw new Error("o repositório possui alterações locais não commitadas");
       }
 
-      const baseHead = (await this.git(["rev-parse", "HEAD"], mission.cwd)).stdout.trim();
-      const baseBranch = (await this.git(["branch", "--show-current"], mission.cwd)).stdout.trim() || "detached";
-      const shortId = mission.id.slice(0, 8);
+      const baseHead = (await this.git(["rev-parse", "HEAD"], sourceCwd)).stdout.trim();
+      const baseBranch = (await this.git(["branch", "--show-current"], sourceCwd)).stdout.trim() || "detached";
+      const shortId = mission.id.slice(0, 8) + "-r" + (mission.round || 1);
       const integrationBranch = `imx/mission-${shortId}`;
-      const root = path.join(this.worktreesRoot, mission.id);
+      const root = path.join(this.worktreesRoot, mission.id, "round-" + (mission.round || 1));
       const integrationPath = path.join(root, "integration");
 
       fs.mkdirSync(root, { recursive: true });
-      await this.git(["branch", integrationBranch, baseHead], mission.cwd);
-      await this.git(["worktree", "add", integrationPath, integrationBranch], mission.cwd);
+      await this.git(["branch", integrationBranch, baseHead], sourceCwd);
+      await this.git(["worktree", "add", integrationPath, integrationBranch], sourceCwd);
 
       const agentWorkspaces = [];
       for (let i = 0; i < mission.plan.tasks.length; i += 1) {
         const task = mission.plan.tasks[i];
         const branch = `imx/${shortId}/${i + 1}-${slug(task.role)}`;
         const agentPath = path.join(root, `agent-${i + 1}`);
-        await this.git(["worktree", "add", "-b", branch, agentPath, integrationBranch], mission.cwd);
+        await this.git(["worktree", "add", "-b", branch, agentPath, integrationBranch], sourceCwd);
         agentWorkspaces.push({
           taskId: task.id,
           cwd: agentPath,
@@ -333,10 +397,10 @@ class Orchestrator {
       return;
     } catch (error) {
       mission.workspaceMode = "shared";
-      mission.resultPath = mission.cwd;
+      mission.resultPath = sourceCwd;
       mission.agentWorkspaces = mission.plan.tasks.map((task) => ({
         taskId: task.id,
-        cwd: mission.cwd,
+        cwd: sourceCwd,
         branch: null
       }));
       this.emitMission("mission:warning", mission, {
@@ -394,7 +458,7 @@ class Orchestrator {
 
     return [
       `Você é um agente do squad IMx. Seu papel é: ${task.role}.`,
-      `Missão geral: ${mission.brief}`,
+      `Missão geral: ${this.planningBrief(mission)}`,
       `Sua tarefa exclusiva: ${task.title}`,
       `Instruções: ${task.instructions}`,
       UI_REFERENCE_GUIDELINES,
@@ -506,7 +570,7 @@ class Orchestrator {
     const prompt = [
       "Você é o PILOTO do IMx em modo de revisão final.",
       "Somente inspecione o projeto. Não altere arquivos.",
-      `Missão original: ${mission.brief}`,
+      `Missão original e pedido atual: ${this.planningBrief(mission)}`,
       "Resultados dos agentes:",
       statuses,
       "",
@@ -526,42 +590,51 @@ class Orchestrator {
 
   startMission(input) {
     if (!this.codexPath) throw new Error("Codex CLI não encontrado no PATH do usuário.");
-    if (!input?.brief?.trim()) throw new Error("Descreva a missão.");
-    if (!input?.cwd) throw new Error("Selecione um workspace.");
-
-    const mission = {
-      id: crypto.randomUUID(),
-      brief: input.brief.trim(),
-      cwd: input.cwd,
-      agentCount: clamp(input.agentCount, 1, 8),
-      autoEdit: input.autoEdit !== false,
-      status: "planning",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      plan: null,
-      agents: [],
-      summary: "",
-      attachments: (Array.isArray(input.attachments) ? input.attachments : [])
-        .filter((item) => item && item.path && fs.existsSync(item.path))
-        .slice(0, 20)
-        .map((item) => ({
-          path: item.path,
-          name: item.name || path.basename(item.path),
-          size: Number(item.size) || 0
-        })),
-      workspaceMode: "pending",
-      canceled: false
-    };
-
+    const instruction = String(input?.brief || "").trim();
+    if (!instruction) throw new Error("Descreva o pedido.");
+    let mission = input.missionId ? this.getMission(input.missionId) : null;
+    if (input.missionId && !mission) throw new Error("Missão não encontrada.");
+    if (mission && (ACTIVE_MISSION_STATUSES.has(mission.status) || this.executions.has(mission.id))) throw new Error("Aguarde a execução atual ou cancele antes de enviar outro pedido.");
+    if (!mission) mission = this.createMission(input);
+    const executionCwd = mission.resultPath || mission.cwd;
+    if (!executionCwd || !fs.existsSync(executionCwd)) throw new Error("A pasta deste projeto não está disponível.");
+    for (const active of this.missions.values()) {
+      if (active.id !== mission.id && ACTIVE_MISSION_STATUSES.has(active.status) &&
+          (active.cwd === mission.cwd || active.executionCwd === executionCwd)) {
+        throw new Error("Outra missão já está trabalhando nesta pasta. Escolha uma pasta diferente.");
+      }
+    }
+    const now = new Date().toISOString();
+    mission.brief = mission.brief || instruction;
+    mission.name = mission.name || instruction.slice(0, 80);
+    mission.currentRequest = instruction;
+    mission.executionCwd = executionCwd;
+    mission.previousSummary = mission.summary || "";
+    mission.messages = mission.messages || [{ id: crypto.randomUUID(), role: "user", text: mission.brief, createdAt: mission.createdAt }];
+    mission.messages.push({ id: crypto.randomUUID(), role: "user", text: instruction, createdAt: now });
+    mission.round = (mission.round || 0) + 1;
+    mission.agentCount = clamp(input.agentCount || mission.agentCount, 1, 8);
+    mission.autoEdit = input.autoEdit !== false;
+    mission.status = "planning";
+    mission.plan = null;
+    mission.agents = [];
+    mission.attachments = (Array.isArray(input.attachments) ? input.attachments : []).filter((item) => item?.path && fs.existsSync(item.path)).slice(0, 20);
+    mission.canceled = false;
+    mission.codexUsageLimited = false;
+    mission.error = "";
+    mission.summary = "";
+    mission.finishedAt = undefined;
     this.missions.set(mission.id, mission);
     this.emitMission("mission:created", mission);
-    this.executeMission(mission).catch((error) => {
+    const execution = this.executeMission(mission).catch((error) => {
       if (mission.canceled) return;
       mission.status = "error";
       mission.error = error.message;
+      mission.messages.push({ id: crypto.randomUUID(), role: "assistant", text: error.message, createdAt: new Date().toISOString() });
       this.emitMission("mission:error", mission, { message: error.message });
     });
-
+    this.executions.set(mission.id, execution);
+    void execution.finally(() => this.executions.delete(mission.id));
     return this.snapshot(mission);
   }
 
@@ -622,7 +695,7 @@ class Orchestrator {
         UI_REFERENCE_GUIDELINES,
         instruction,
         "",
-        `Missão geral: ${mission.brief}`,
+        `Missão geral: ${this.planningBrief(mission)}`,
         `Seu papel: ${task.role}`,
         `Sua tarefa: ${task.title}`,
         "Considere o trabalho já realizado neste workspace e continue a partir dele.",
@@ -785,6 +858,7 @@ class Orchestrator {
     this.emitMission("mission:status", mission);
     mission.summary = await this.finalReview(mission, results);
 
+    mission.messages.push({ id: crypto.randomUUID(), role: "assistant", text: mission.summary || "Entrega concluída. Envie os próximos ajustes neste chat.", createdAt: new Date().toISOString() });
     mission.status = "done";
     mission.finishedAt = new Date().toISOString();
     this.emitMission("mission:completed", mission, { results });
@@ -792,7 +866,7 @@ class Orchestrator {
 
   cancelMission(missionId) {
     const mission = this.missions.get(missionId);
-    if (!mission) return false;
+    if (!mission || !ACTIVE_MISSION_STATUSES.has(mission.status)) return false;
 
     mission.canceled = true;
     mission.status = "canceled";
@@ -813,3 +887,4 @@ class Orchestrator {
 }
 
 module.exports = { Orchestrator };
+
