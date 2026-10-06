@@ -1330,3 +1330,5 @@ body {
   .completion-banner { flex-wrap: wrap; }
   .mission-performance { gap: 12px; }
 }
+
+.agent-card[hidden] { display: none; }

@@ -21,6 +21,7 @@ export interface AgentMeta {
   startedAt?: string;
   logPath?: string;
   taskId?: string;
+  sessionId?: string | null;
   branch?: string | null;
 }
 

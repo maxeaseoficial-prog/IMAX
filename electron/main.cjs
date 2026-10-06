@@ -163,7 +163,7 @@ function registerIpc() {
   ipcMain.handle("mission:delete", async (_event, id) => {
     const removed = orchestrator.deleteMission(id);
     await previewManager.stop(id);
-    terminalManager.killMission(id);
+    terminalManager.killMission(id, { forget: true });
     return removed;
   });
   ipcMain.handle("mission:preview", async (_event, id) => {
@@ -198,7 +198,11 @@ function registerIpc() {
 
   ipcMain.handle("terminal:write", (_event, { id, data }) => terminalManager.write(id, data));
   ipcMain.handle("terminal:resize", (_event, { id, cols, rows }) => terminalManager.resize(id, cols, rows));
-  ipcMain.handle("terminal:kill", (_event, id) => terminalManager.kill(id));
+  ipcMain.handle("terminal:kill", (_event, id) => {
+    const killed = terminalManager.kill(id);
+    if (killed) orchestrator.closeAgent(id);
+    return killed;
+  });
 
   ipcMain.handle("mission:start", async (_event, input = {}) => {
     const existing = input.missionId ? orchestrator.getMission(input.missionId) : null;
@@ -261,6 +265,6 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   quitting = true;
   for (const mission of orchestrator.missions.values()) orchestrator.cancelMission(mission.id);
-  for (const terminal of terminalManager.list()) terminalManager.kill(terminal.id);
+  for (const terminal of terminalManager.list()) terminalManager.kill(terminal.id, { forget: false });
   previewManager.dispose().finally(() => app.quit());
 });

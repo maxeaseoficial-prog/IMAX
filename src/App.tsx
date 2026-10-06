@@ -74,13 +74,16 @@ function shortPath(value?: string) {
 function TerminalPane({
   agent,
   canSendInstruction,
-  onClose
+  onClose,
+  visible
 }: {
   agent: AgentMeta;
   canSendInstruction: boolean;
+  visible: boolean;
   onClose: (id: string) => Promise<void>;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const fitRef = useRef<(() => void) | null>(null);
   const [instruction, setInstruction] = useState("");
   const [sending, setSending] = useState(false);
   const [instructionState, setInstructionState] = useState("");
@@ -114,7 +117,7 @@ function TerminalPane({
       fontSize: 12.5,
       lineHeight: 1.26,
       letterSpacing: 0.1,
-      scrollback: 8000,
+      scrollback: 100000,
       theme: {
         background: "#070b12",
         foreground: "#dcecff",
@@ -156,6 +159,7 @@ function TerminalPane({
       } catch {}
     };
 
+    fitRef.current = fit;
     const resizeObserver = new ResizeObserver(fit);
     resizeObserver.observe(hostRef.current);
 
@@ -171,6 +175,7 @@ function TerminalPane({
 
     return () => {
       disposed = true;
+      fitRef.current = null;
       unsubscribeData();
       inputDisposable.dispose();
       resizeObserver.disconnect();
@@ -178,8 +183,15 @@ function TerminalPane({
     };
   }, [agent.id, agent.interactive]);
 
+  useEffect(() => {
+    if (visible) {
+      const frame = requestAnimationFrame(() => fitRef.current?.());
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [visible]);
+
   return (
-    <article className="agent-card">
+    <article className="agent-card" hidden={!visible}>
       <header className="agent-card__head">
         <div className="agent-identity">
           <span className={`agent-dot agent-dot--${agent.status}`} />
@@ -447,7 +459,6 @@ export default function App() {
     setBusy(true);
     setNotice("");
     setPilotLog("");
-    setAgents((current) => current.filter((agent) => agent.missionId !== mission?.id || agent.kind !== "mission"));
 
     try {
       const created = await window.imx.startMission({
@@ -460,6 +471,7 @@ export default function App() {
       });
       selectedMissionId.current = created.id;
       setMission(created);
+      setSettings((current) => ({ ...current, agentCount: created.agentCount }));
       setHistory((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       drafts.current.delete(created.id);
       drafts.current.delete("new");
@@ -683,7 +695,7 @@ export default function App() {
                   <button
                     key={count}
                     className={settings.agentCount === count ? "active" : ""}
-                    disabled={activeMission}
+                    disabled={activeMission || Boolean(mission?.agents?.length)}
                     onClick={() => void persistSettings({ agentCount: count })}
                   >
                     {count}
@@ -847,11 +859,12 @@ export default function App() {
               <strong>Nenhum terminal aberto</strong>
               <p>Inicie uma missão com o PILOTO ou abra um Codex manual para trabalhar de forma independente.</p>
             </div>
-          ) : (
-            missionAgents.map((agent) => (
+          ) : null}
+          {agents.map((agent) => (
               <TerminalPane
                 key={agent.id}
                 agent={agent}
+                visible={missionAgents.some((item) => item.id === agent.id)}
                 onClose={closeTerminal}
                 canSendInstruction={Boolean(
                   agent.kind === "mission" &&
@@ -859,8 +872,7 @@ export default function App() {
                   activeMission
                 )}
               />
-            ))
-          )}
+            ))}
         </section>
       </main>
       {contextMenu ? (

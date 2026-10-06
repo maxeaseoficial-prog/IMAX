@@ -97,6 +97,9 @@ class Orchestrator {
     this.executions = new Map();
     fs.mkdirSync(this.worktreesRoot, { recursive: true });
     for (const mission of this.state.listMissions()) {
+      for (const agent of mission.agents || []) {
+        if (!(mission.closedAgentIds || []).includes(agent.id)) this.terminalManager.restoreAgent?.(agent);
+      }
       if (ACTIVE_MISSION_STATUSES.has(mission.status)) {
         mission.status = "interrupted";
         mission.error = "A execução anterior foi interrompida ao fechar o aplicativo. Envie uma nova instrução para continuar.";
@@ -143,6 +146,18 @@ class Orchestrator {
     }
     this.missions.delete(id);
     return this.state.deleteMission(id);
+  }
+
+  closeAgent(id) {
+    for (const stored of this.state.listMissions()) {
+      const mission = this.getMission(stored.id);
+      if (!mission.agents?.some(agent => agent.id === id)) continue;
+      mission.closedAgentIds = [...new Set([...(mission.closedAgentIds || []), id])];
+      mission.agents = mission.agents.filter(agent => agent.id !== id);
+      if (!ACTIVE_MISSION_STATUSES.has(mission.status)) mission.previousAgents = (mission.previousAgents || []).filter(agent => agent.id !== id);
+      this.missions.set(mission.id, mission);
+      this.emitMission("mission:agent-closed", mission);
+    }
   }
 
   planningBrief(mission) {
@@ -318,6 +333,7 @@ class Orchestrator {
       WEB_DESIGN_GUIDELINES,
       `Missão do usuário: ${this.planningBrief(mission)}`,
       `Número exato de agentes: ${mission.agentCount}`,
+      mission.previousAgents?.length ? "SQUAD FIXO: distribua o pedido entre estes mesmos agentes, na ordem indicada, preservando seus papéis. Não recrie o projeto nem repita trabalho pronto. " + mission.previousAgents.map((agent, index) => `${index + 1}: ${agent.role}`).join("; ") : "",
       "",
       "Retorne SOMENTE JSON válido, sem markdown, exatamente neste formato:",
       "{",
@@ -335,7 +351,7 @@ class Orchestrator {
     ].join("\n");
 
     try {
-      const output = await this.runCodex(prompt, mission.cwd, mission, { fullAuto: false, label: "PILOTO · planejamento" });
+      const output = await this.runCodex(prompt, mission.executionCwd || mission.cwd, mission, { fullAuto: false, label: "PILOTO · planejamento" });
       return this.parsePlan(output, this.planningBrief(mission), mission.agentCount);
     } catch (error) {
       if (hasUsageLimit(error.message)) {
@@ -384,12 +400,18 @@ class Orchestrator {
         const task = mission.plan.tasks[i];
         const branch = `imx/${shortId}/${i + 1}-${slug(task.role)}`;
         const agentPath = path.join(root, `agent-${i + 1}`);
-        await this.git(["worktree", "add", "-b", branch, agentPath, integrationBranch], sourceCwd);
-        agentWorkspaces.push({
-          taskId: task.id,
-          cwd: agentPath,
-          branch
-        });
+        const previous = mission.previousAgents?.[i];
+        if (previous?.branch && fs.existsSync(previous.cwd)) {
+          const currentBranch = await this.git(["branch", "--show-current"], previous.cwd);
+          if (currentBranch.stdout.trim() !== previous.branch) throw new Error("a branch da worktree anterior foi alterada; ela não será modificada");
+          const previousDirty = await this.git(["status", "--porcelain"], previous.cwd);
+          if (previousDirty.stdout.trim()) throw new Error("a worktree anterior do agente possui alterações locais; elas serão preservadas");
+          await this.git(["merge", "--ff-only", baseHead], previous.cwd);
+          agentWorkspaces.push({ taskId: task.id, cwd: previous.cwd, branch: previous.branch });
+        } else {
+          await this.git(["worktree", "add", "-b", branch, agentPath, integrationBranch], sourceCwd);
+          agentWorkspaces.push({ taskId: task.id, cwd: agentPath, branch });
+        }
       }
 
       mission.workspaceMode = "worktree";
@@ -625,11 +647,14 @@ class Orchestrator {
     mission.messages = mission.messages || [{ id: crypto.randomUUID(), role: "user", text: mission.brief, createdAt: mission.createdAt }];
     mission.messages.push({ id: crypto.randomUUID(), role: "user", text: instruction, createdAt: now });
     mission.round = (mission.round || 0) + 1;
-    mission.agentCount = clamp(input.agentCount || mission.agentCount, 1, 8);
+    mission.previousAgents = (mission.agents || []).filter(agent => !(mission.closedAgentIds || []).includes(agent.id)).map(agent => ({
+      ...agent, sessionId: agent.sessionId || parseSessionId(this.terminalManager.getBuffer?.(agent.id) || "")
+    }));
+    mission.agentCount = mission.previousAgents.length || clamp(input.agentCount || mission.agentCount, 1, 8);
     mission.autoEdit = input.autoEdit !== false;
     mission.status = "planning";
     mission.plan = null;
-    mission.agents = [];
+    mission.agents = mission.agents || [];
     mission.attachments = (Array.isArray(input.attachments) ? input.attachments : []).filter((item) => item?.path && fs.existsSync(item.path)).slice(0, 20);
     mission.canceled = false;
     mission.codexUsageLimited = false;
@@ -683,7 +708,7 @@ class Orchestrator {
       workspace,
       agent,
       queue: [],
-      sessionId: null,
+      sessionId: agent.sessionId || null,
       running: true,
       closed: false
     };
@@ -692,14 +717,11 @@ class Orchestrator {
 
     let finalExit = await this.terminalManager.waitForExit(agent.id);
     let output = this.terminalManager.getBuffer(agent.id);
-    runtime.sessionId = parseSessionId(output);
+    runtime.sessionId = parseSessionId(output) || runtime.sessionId;
     runtime.running = false;
 
     while (!mission.canceled && finalExit.status === "done") {
-      if (runtime.queue.length === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 350));
-        if (runtime.queue.length === 0) break;
-      }
+      if (runtime.queue.length === 0) break;
 
       const instruction = runtime.queue.shift();
       const followUpPrompt = [
@@ -751,6 +773,12 @@ class Orchestrator {
       runtime.running = false;
     }
 
+    const storedAgent = mission.agents?.find(item => item.id === agent.id);
+    if (storedAgent) {
+      storedAgent.sessionId = runtime.sessionId;
+      storedAgent.status = finalExit.status;
+      this.snapshot(mission);
+    }
     runtime.closed = true;
     this.agentRuns.delete(agent.id);
 
@@ -763,6 +791,12 @@ class Orchestrator {
 
   async executeMission(mission) {
     mission.plan = await this.planMission(mission);
+    if (mission.previousAgents?.length) {
+      mission.plan.tasks = mission.plan.tasks.map((task, index) => ({ ...task,
+        id: mission.previousAgents[index]?.taskId || task.id,
+        role: mission.previousAgents[index]?.role || task.role
+      }));
+    }
     if (mission.canceled) return;
 
     if (mission.codexUsageLimited) {
@@ -786,18 +820,29 @@ class Orchestrator {
     const runs = mission.plan.tasks.map(async (task, index) => {
       const startedAtMs = Date.now();
       const workspace = mission.agentWorkspaces[index];
+      const previous = mission.previousAgents?.[index];
+      if (previous && (mission.closedAgentIds || []).includes(previous.id)) {
+        return { task, workspace, agent: previous, exit: { status: "stopped", exitCode: 0 }, output: "Terminal fechado pelo usuário.", commit: { changed: false } };
+      }
       const stagedAttachments = this.stageAttachments(mission, workspace, task);
-      const prompt = this.buildAgentPrompt(mission, task, workspace, stagedAttachments);
+      let prompt = this.buildAgentPrompt(mission, task, workspace, stagedAttachments);
+      if (previous && !previous.sessionId) {
+        prompt += "\nHISTÓRICO DISPONÍVEL DO MESMO AGENTE (CONTINUAÇÃO):\n" + (this.terminalManager.getBuffer?.(previous.id) || "").slice(-24000);
+        this.emitMission("mission:warning", mission, { message: `A sessão antiga de ${previous.role} não tem ID recuperável. O painel será preservado e o histórico disponível será usado como contexto.` });
+      }
       const imagePaths = stagedAttachments
         .map((item) => item.path)
         .filter((filePath) => /\.(png|jpe?g|webp|gif)$/i.test(filePath));
       const args = this.buildExecArgs(prompt, {
         fullAuto: mission.autoEdit,
-        images: imagePaths
+        images: imagePaths,
+        resumeSessionId: previous?.sessionId || null
       });
+      if (previous) this.terminalManager.inject(previous.id, `\r\n[IMx] continuação da missão · rodada ${mission.round}\r\n`);
 
       const agent = this.terminalManager.create({
-        title: `${index + 1}. ${task.role}`,
+        id: previous?.id,
+        title: previous?.title || `${index + 1}. ${task.role}`,
         role: task.role,
         kind: "mission",
         cwd: workspace.cwd,
@@ -807,7 +852,11 @@ class Orchestrator {
         missionId: mission.id
       });
 
-      mission.agents.push({ ...agent, taskId: task.id, branch: workspace.branch });
+      agent.sessionId = previous?.sessionId || null;
+      const agentView = { ...agent, taskId: task.id, branch: workspace.branch };
+      const storedIndex = mission.agents.findIndex(item => item.id === agent.id);
+      if (storedIndex >= 0) mission.agents[storedIndex] = agentView;
+      else mission.agents.push(agentView);
       this.emitMission("mission:agent", mission, { agent, task, branch: workspace.branch });
 
       const turnResult = await this.waitForAgentTurns(mission, task, workspace, agent);

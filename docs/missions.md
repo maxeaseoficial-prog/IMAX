@@ -24,6 +24,8 @@ node tests/mission-metrics.cjs
 node tests/mission-completion.cjs
 node tests/web-design-guidelines.cjs
 node tests/preview-dependencies.cjs
+node tests/terminal-history.cjs
+node tests/agent-continuity.cjs
 ```
 
 Os testes usam projetos temporários e não enviam missões ao Codex. A validação de Electron, node-pty e abertura do navegador padrão deve ser feita no desktop local.
@@ -45,3 +47,13 @@ O PILOTO, os agentes, as instruções adicionais e a revisão final recebem dire
 ## Instalação incompleta na prévia
 
 A prévia verifica os pacotes declarados e o motor do servidor no contexto do projeto. A existência de `node_modules` sozinha não basta. Se houver dependências ausentes, executa `npm install --include=dev --no-audit --no-fund`, verifica novamente e só então inicia o servidor. Se a instalação não resolver, informa os pacotes ausentes e não abre o navegador. Sites React/Vite devem ser acessados pela URL do servidor; o HTML de entrada não é uma página autônoma para abrir por `file://`.
+
+## Continuidade dos terminais e agentes
+
+Trocar de missão oculta seus painéis sem desmontar os terminais. Um novo pedido no chat principal mantém os agentes registrados, seus IDs, papéis, logs e histórico de instruções. O PILOTO distribui a nova tarefa pelo squad existente; o seletor de quantidade fica bloqueado enquanto houver agentes registrados. Fechar pelo X continua removendo o painel intencionalmente.
+
+As rodadas seguintes usam `codex exec resume` com o ID de sessão salvo. As worktrees existentes dos agentes são atualizadas por fast-forward a partir da última entrega integrada, preservando a branch de trabalho do usuário. Se worktrees não puderem ser utilizadas, o aviso de modo compartilhado permanece. Alterações locais não são descartadas.
+
+Metadados dos terminais são salvos em `terminals.json` na pasta de logs do aplicativo. Logs permanecem entre rodadas e reinícios; processos encerrados não são fingidos como ativos. Logs antigos podem ser recuperados a partir de `logPath` registrado na missão. Se não houver ID de sessão antigo recuperável, o IMx avisa e inclui o histórico disponível no contexto, em vez de alegar uma retomada real. Histórico já apagado sem log não pode ser reconstruído. O visor mantém até 100 mil linhas de scrollback; o log em disco permanece completo.
+
+A execução dos agentes continua paralela. Retomar contexto/workspaces evita recriação desnecessária; foi removida a espera fixa de 350 ms entre turnos. Isso não garante um tempo de resposta específico do modelo. Cancelar preserva o histórico, enquanto excluir a missão remove seus painéis associados.
