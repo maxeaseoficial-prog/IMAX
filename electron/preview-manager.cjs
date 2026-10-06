@@ -3,6 +3,7 @@ const path = require("node:path");
 const http = require("node:http");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
+const { createRequire } = require("node:module");
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".woff2": "font/woff2" };
 
@@ -45,6 +46,26 @@ function projectAt(root) {
     if (fs.existsSync(path.join(cwd, "index.html"))) return { cwd, kind: "static" };
   }
   throw new Error("Não encontrei uma prévia web compatível. São suportados Vite, Next.js, React Scripts e sites HTML estáticos.");
+}
+
+function missingDependencies(project) {
+  const requireFromProject = createRequire(path.join(project.cwd, "package.json"));
+  const engine = { vite: "vite", next: "next", cra: "react-scripts" }[project.kind];
+  const names = new Set([...Object.keys(project.pkg.dependencies || {}), ...Object.keys(project.pkg.devDependencies || {}), engine]);
+  return [...names].filter((name) => {
+    if (!name) return false;
+    const installed = (requireFromProject.resolve.paths(name) || []).some((folder) => {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(folder, name, "package.json"), "utf8"));
+        return Boolean(pkg.name || pkg.version);
+      } catch { return false; }
+    });
+    if (!installed) return true;
+    if (name === engine) {
+      try { requireFromProject.resolve(name); } catch { return true; }
+    }
+    return false;
+  });
 }
 
 class PreviewManager {
@@ -96,10 +117,11 @@ class PreviewManager {
         });
         entry.url = "http://127.0.0.1:" + entry.server.address().port;
       } else {
-        // Integration worktrees do not inherit node_modules from the original checkout.
-        if (!fs.existsSync(path.join(project.cwd, "node_modules"))) {
+        // A folder can exist after a partial install or an install omitting dev deps.
+        // Resolve the project's dependencies, never rely on the IMx Vite in PATH.
+        if (missingDependencies(project).length) {
           await new Promise((resolve, reject) => {
-            const child = spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "--no-audit", "--no-fund"], {
+            const child = spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "--include=dev", "--no-audit", "--no-fund"], {
               cwd: project.cwd, env: this.baseEnv, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32"
             });
             entry.child = child;
@@ -119,6 +141,8 @@ class PreviewManager {
           entry.log = "";
         }
         if (entry.closed) throw new Error("Prévia cancelada.");
+        const missing = missingDependencies(project);
+        if (missing.length) throw new Error("Dependências ainda ausentes após npm install: " + missing.join(", ") + ". Confira dependencies/devDependencies do package.json deste projeto.");
         const port = await freePort();
         entry.url = "http://127.0.0.1:" + port;
         const args = project.kind === "vite"
@@ -179,4 +203,4 @@ class PreviewManager {
   }
 }
 
-module.exports = { PreviewManager, projectAt };
+module.exports = { PreviewManager, projectAt, missingDependencies };

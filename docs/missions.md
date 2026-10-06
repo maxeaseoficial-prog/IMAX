@@ -23,6 +23,7 @@ node tests/codex-workspaces.cjs
 node tests/mission-metrics.cjs
 node tests/mission-completion.cjs
 node tests/web-design-guidelines.cjs
+node tests/preview-dependencies.cjs
 ```
 
 Os testes usam projetos temporários e não enviam missões ao Codex. A validação de Electron, node-pty e abertura do navegador padrão deve ser feita no desktop local.
@@ -40,3 +41,7 @@ A comparação soma as durações medidas das tarefas e mantém o restante do te
 ## Direção de arte dos sites
 
 O PILOTO, os agentes, as instruções adicionais e a revisão final recebem diretrizes resumidas do prompt-mestre de Henrique, em `electron/web-design-guidelines.cjs`. A referência completa está em `docs/web-design-master.md`. As regras se aplicam às tarefas de web/UI; o briefing e o escopo explícitos prevalecem. Não impõem a identidade do IMx aos sites. A revisão final permanece somente leitura, e os agentes devem declarar limitações de QA visual.
+
+## Instalação incompleta na prévia
+
+A prévia verifica os pacotes declarados e o motor do servidor no contexto do projeto. A existência de `node_modules` sozinha não basta. Se houver dependências ausentes, executa `npm install --include=dev --no-audit --no-fund`, verifica novamente e só então inicia o servidor. Se a instalação não resolver, informa os pacotes ausentes e não abre o navegador. Sites React/Vite devem ser acessados pela URL do servidor; o HTML de entrada não é uma página autônoma para abrir por `file://`.
