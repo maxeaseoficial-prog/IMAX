@@ -74,6 +74,44 @@ body {
   backdrop-filter: blur(18px);
 }
 
+.app.app--sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app--sidebar-collapsed .sidebar {
+  display: none;
+}
+
+.topbar-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sidebar-toggle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #203149;
+  border-radius: 7px;
+  background: rgba(11, 18, 29, 0.92);
+  color: #acbdd2;
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  border-color: #2698ff;
+  color: #5bc8ff;
+}
+
+.sidebar-toggle:focus-visible {
+  outline: 2px solid #5bc8ff;
+  outline-offset: 3px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -1186,12 +1224,8 @@ body {
 }
 
 @media (max-width: 880px) {
-  .sidebar {
-    display: none;
-  }
-
   .app {
-    grid-template-columns: 1fr;
+    grid-template-columns: 210px minmax(0, 1fr);
   }
 
   .pilot-card__top {

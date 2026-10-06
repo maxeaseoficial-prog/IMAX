@@ -229,6 +229,7 @@ function TerminalPane({
 }
 
 export default function App() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [system, setSystem] = useState<SystemStatus | null>(null);
   const [settings, setSettings] = useState<Settings>({
     workspace: "",
@@ -440,8 +441,8 @@ export default function App() {
   };
 
   return (
-    <div className="app">
-      <aside className="sidebar">
+    <div className={`app ${sidebarCollapsed ? "app--sidebar-collapsed" : ""}`}>
+      <aside className="sidebar" id="workspace-navigation" hidden={sidebarCollapsed}>
         <div className="brand">
           <div className="brand-mark">IM</div>
           <div>
@@ -503,9 +504,25 @@ export default function App() {
 
       <main className="main">
         <header className="topbar">
-          <div>
+          <div className="topbar-heading">
+            <button
+              type="button"
+              className="sidebar-toggle"
+              title={sidebarCollapsed ? "Mostrar navegação" : "Esconder navegação"}
+              aria-label={sidebarCollapsed ? "Mostrar navegação" : "Esconder navegação"}
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="workspace-navigation"
+              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" strokeWidth="1.7" />
+                <path d="M9 4v16" stroke="currentColor" strokeWidth="1.7" />
+              </svg>
+            </button>
+            <div>
             <span className="eyebrow">LOCAL AGENTIC WORKSPACE</span>
             <h1>Squad Control</h1>
+            </div>
           </div>
 
           <div className="topbar-actions">
