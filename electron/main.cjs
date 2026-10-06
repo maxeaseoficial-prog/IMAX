@@ -120,18 +120,40 @@ function wireTerminalEvents() {
   terminalManager.on("exit", (payload) => send("terminal:exit", payload));
 }
 
+async function startBrowserBridge() {
+  if (browserBridge) return browserBridge;
+  if (bridgeStarting) return bridgeStarting;
+  const tokenFile = path.join(app.getPath("userData"), "browser-pairing.json");
+  let token;
+  try { const saved = JSON.parse(fs.readFileSync(tokenFile, "utf8")); if (/^[a-f0-9]{64}$/.test(saved.token)) token = saved.token; } catch {}
+  const candidate = new BrowserBridge({ handlers: browserHandlers, token, approvePairing: async (origin) => {
+    mainWindow?.show(); mainWindow?.focus();
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: "question", title: "Conectar navegador ao IMAX", message: "Autorizar este navegador a controlar os terminais?",
+      detail: origin + " solicitou acesso. Autorize somente se você acabou de abrir o site neste Mac. O acesso permite enviar comandos e controlar agentes. Use Desconectar navegador para revogar.",
+      buttons: ["Cancelar", "Autorizar"], defaultId: 0, cancelId: 0
+    });
+    return result.response === 1;
+  }});
+  bridgeStarting = candidate.start().then(bridge => {
+    fs.mkdirSync(path.dirname(tokenFile), {recursive:true});
+    fs.writeFileSync(tokenFile, JSON.stringify({token:bridge.token}), {mode:0o600});
+    fs.chmodSync(tokenFile, 0o600);
+    browserBridge = bridge; return bridge;
+  }).catch(error => { candidate.close(); bridgeStarting = null; throw error; });
+  return bridgeStarting;
+}
+
 function registerIpc() {
   ipcMain.handle("browser:open", async () => {
-    if (!browserBridge) {
-      if (!bridgeStarting) bridgeStarting = new BrowserBridge({ handlers: browserHandlers }).start();
-      try { browserBridge = await bridgeStarting; }
-      catch (error) { bridgeStarting = null; throw new Error("Não foi possível abrir a ponte local (porta 47831): " + error.message); }
-    }
+    await startBrowserBridge();
     await shell.openExternal("https://imax-two.vercel.app/#pair=" + browserBridge.token);
     return true;
   });
   ipcMain.handle("browser:stop", () => {
-    browserBridge?.close(); browserBridge = null; bridgeStarting = null; return true;
+    browserBridge?.close(); browserBridge = null; bridgeStarting = null;
+    fs.rmSync(path.join(app.getPath("userData"), "browser-pairing.json"), { force: true });
+    return true;
   });
   handle("system:status", async () => ({
     codexFound: Boolean(runtime.codexPath),
@@ -270,6 +292,7 @@ app.whenReady().then(async () => {
   wireTerminalEvents();
   registerIpc();
   createWindow();
+  void startBrowserBridge().catch(error => console.error("[IMAX] Ponte do navegador indisponível:", error.message));
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

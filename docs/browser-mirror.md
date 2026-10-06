@@ -46,3 +46,15 @@ para não gastar cota Codex. Validação nativa de Electron/Chrome no Mac é nec
 Os repositórios maxeaseoficial-prog/IMAX (feat/imx-mvp) e HeadHenrique/imax
 (main da cópia web) não têm sincronização automática entre si. A Vercel acompanha
 HeadHenrique/imax. Mudanças no desktop devem manter o contrato de IPC/RPC compatível.
+
+## Atualização: abertura direta
+
+A ponte agora inicia automaticamente com o IMAX. Abra o endereço da Vercel
+no mesmo Mac: na primeira conexão, o IMAX mostra uma confirmação local.
+Depois de autorizado, o token fica no armazenamento local desse navegador e em
+browser-pairing.json no userData, com permissão 0600. Isso mantém o pareamento
+entre reinícios. Desconectar navegador remove o arquivo e desativa a ponte até
+reativá-la ou reiniciar o app; o token anterior deixa de funcionar.
+O site nunca recebe credenciais sem uma autorização local inicial ou um link
+explicitamente aberto no aplicativo. O Mac e o IMAX precisam estar ativos.
+Abrir o site não inicia sozinho um aplicativo fechado no sistema operacional.

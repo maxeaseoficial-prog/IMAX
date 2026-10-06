@@ -19,7 +19,7 @@ export async function connectBrowser(token: string, disconnected: () => void) {
     return () => { callbacks.get(channel)?.delete(callback); };
   }
   const stream = await request("/events");
-  if (!stream.ok || !stream.body) { controller.abort(); throw new Error("Pareamento recusado. Use Abrir no navegador no IMAX do Mac."); }
+  if (!stream.ok || !stream.body) { controller.abort(); throw Object.assign(new Error("Conexão recusada pelo IMAX."), {status:stream.status}); }
   const reader = stream.body.getReader();
   const api: Window["imx"] = {
   getSystemStatus: () => invoke("system:status"),
@@ -74,4 +74,20 @@ export async function connectBrowser(token: string, disconnected: () => void) {
     finally { if (!stopped) { controller.abort(); disconnected(); } }
   };
   return {api, start: () => { if (!started) { started = true; void consume(); } }, close: () => { stopped = true; controller.abort(); callbacks.clear(); }};
+}
+
+let pairing: Promise<string> | null = null;
+export function pairBrowser(): Promise<string> {
+  if (!pairing) pairing = (async () => {
+    const response = await fetch(BASE + "/pair", {
+      method:"POST", headers:{"Content-Type":"application/json"}, body:"{}",
+      credentials:"omit", cache:"no-store", signal:AbortSignal.timeout(120000), targetAddressSpace:"loopback"
+    } as RequestInit);
+    if (response.status === 401 || response.status === 404) throw new Error("Atualize e reinicie o IMAX no Mac para ativar a conexão automática.");
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Autorize a conexão no aplicativo IMAX.");
+    if (!/^[a-f0-9]{64}$/.test(body.token)) throw new Error("Resposta de pareamento inválida.");
+    return body.token;
+  })().finally(() => { pairing = null; });
+  return pairing;
 }

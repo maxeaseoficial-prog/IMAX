@@ -39,3 +39,21 @@ test('authenticated loopback bridge shares handlers and streams, rejects foreign
     assert.equal(restored.status,200); second.abort();
   } finally { bridge.close(); bridge.server.closeAllConnections(); }
 });
+test('first pairing requires local consent; foreign origins never prompt; revocation invalidates old credentials', async () => {
+  let prompts=0; let allow=false;
+  const bridge=await new BrowserBridge({port:0,handlers:new Map(),approvePairing:async()=>{prompts++;return allow;}}).start();
+  const url=`http://127.0.0.1:${bridge.port}/pair`;
+  const pair=(origin='https://imax-two.vercel.app')=>fetch(url,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:'{}'});
+  try {
+    assert.equal((await pair('https://evil.example')).status,403); assert.equal(prompts,0);
+    assert.equal((await pair()).status,403); assert.equal(prompts,1);
+    assert.equal((await pair()).status,429);
+    bridge.lastPairing=0;allow=true;
+    const approved=await pair(); assert.equal(approved.status,200);
+    assert.equal((await approved.json()).token,bridge.token);
+    const restart=new BrowserBridge({handlers:new Map(),token:bridge.token});
+    assert.equal(restart.token,bridge.token);
+    const revoked=new BrowserBridge({handlers:new Map()});
+    assert.notEqual(revoked.token,bridge.token);
+  } finally {bridge.close();bridge.server.closeAllConnections();}
+});

@@ -2,9 +2,10 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const ORIGINS = new Set(['https://imax-two.vercel.app', 'https://imax-trendradar1.vercel.app']);
 class BrowserBridge {
-  constructor({ handlers, port = 47831 }) {
+  constructor({ handlers, port = 47831, token, approvePairing = async () => false }) {
     this.handlers = handlers; this.port = port; this.clients = new Set();
-    this.token = crypto.randomBytes(32).toString('hex');
+    this.token = token || crypto.randomBytes(32).toString('hex');
+    this.approvePairing = approvePairing; this.pairing = false; this.lastPairing = 0; this.closed = false;
     this.server = http.createServer((req, res) => void this.handle(req, res));
   }
   async start() {
@@ -22,6 +23,17 @@ class BrowserBridge {
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Private-Network', 'true');
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    if (req.method === 'POST' && req.url === '/pair') {
+      if (!String(req.headers['content-type']).startsWith('application/json')) return json(415, {error:'JSON necessário.'});
+      if (this.pairing || Date.now() - this.lastPairing < 15000) return json(429, {error:'Confira a autorização na janela do IMAX e tente novamente.'});
+      this.pairing = true; this.lastPairing = Date.now();
+      try {
+        const allowed = await this.approvePairing(origin);
+        if (this.closed || !allowed) return json(403, {error:'Conexão não autorizada no IMAX.'});
+        return json(200, {token:this.token});
+      } catch { return json(500, {error:'Falha ao autorizar o navegador.'}); }
+      finally { this.pairing = false; }
+    }
     const supplied = Buffer.from(req.headers.authorization || '');
     const expected = Buffer.from(`Bearer ${this.token}`);
     if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return json(401, {error:'Pareamento inválido. Abra o navegador pelo IMAX novamente.'});
@@ -47,6 +59,6 @@ class BrowserBridge {
     const message = `data: ${JSON.stringify({channel, payload})}\n\n`;
     for (const client of this.clients) { if (client.writableLength > 1024 * 1024) client.destroy(); else client.write(message); }
   }
-  close() { for (const client of this.clients) client.destroy(); this.clients.clear(); this.server.close(); }
+  close() { this.closed = true; for (const client of this.clients) client.destroy(); this.clients.clear(); this.server.close(); }
 }
 module.exports = {BrowserBridge};
