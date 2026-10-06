@@ -291,6 +291,7 @@ export default function App() {
   const selectMission = (next: Mission | null) => {
     drafts.current.set(selectedMissionId.current || "new", currentDraft.current);
     selectedMissionId.current = next?.id || null;
+    sessionStorage.setItem("imx-selected-mission", next?.id || "");
     const draft = drafts.current.get(next?.id || "new");
     setMission(next);
     if (next) setSettings((current) => ({ ...current, agentCount: next.agentCount, autoEdit: next.autoEdit }));
@@ -354,9 +355,15 @@ export default function App() {
       setSystem(systemInfo);
       setSettings(storedSettings);
       setHistory(storedMissions);
+      const restored = storedMissions.find(item => item.id === sessionStorage.getItem("imx-selected-mission"));
+      if (restored) { selectedMissionId.current = restored.id; setMission(restored); }
       setAgents(terminals.filter((agent) => !closedTerminals.current.has(agent.id)));
     });
 
+    const offRemoved = window.imx.onTerminalRemoved?.(({ id }) => {
+      closedTerminals.current.add(id);
+      setAgents(current => current.filter(agent => agent.id !== id));
+    });
     const offCreated = window.imx.onTerminalCreated((agent) => {
       if (closedTerminals.current.has(agent.id)) return;
       setAgents((current) => upsertAgent(current, agent));
@@ -390,6 +397,7 @@ export default function App() {
 
     return () => {
       mounted = false;
+      offRemoved?.();
       offCreated();
       offStatus();
       offExit();
@@ -653,6 +661,10 @@ export default function App() {
           </div>
 
           <div className="topbar-actions">
+            {window.imx.openBrowser && <>
+              <button className="secondary-button" onClick={() => void window.imx.openBrowser!().catch(error => setNotice(String(error)))}>Abrir no navegador</button>
+              <button className="secondary-button" onClick={() => void window.imx.stopBrowser!().then(() => setNotice("Acesso pelo navegador encerrado.")).catch(error => setNotice(String(error)))}>Desconectar navegador</button>
+            </>}
             {mission?.status === "done" ? (
             <button className="primary-button preview-button" disabled={previewBusy} onClick={() => void openPreview()}>
               {previewBusy ? "Abrindo prévia…" : "Abrir resultado"}
@@ -908,4 +920,5 @@ export default function App() {
     </div>
   );
 }
+
 

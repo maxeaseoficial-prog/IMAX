@@ -7,6 +7,8 @@ function subscribe(channel, callback) {
 }
 
 contextBridge.exposeInMainWorld("imx", {
+  openBrowser: () => ipcRenderer.invoke("browser:open"),
+  stopBrowser: () => ipcRenderer.invoke("browser:stop"),
   getSystemStatus: () => ipcRenderer.invoke("system:status"),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
   chooseAttachments: () => ipcRenderer.invoke("attachments:choose"),
@@ -31,10 +33,12 @@ contextBridge.exposeInMainWorld("imx", {
     ipcRenderer.invoke("mission:agent-instruction", { agentId, text }),
   openPath: (targetPath) => ipcRenderer.invoke("path:open", targetPath),
 
+  onTerminalRemoved: (callback) => subscribe("terminal:removed", callback),
   onTerminalCreated: (callback) => subscribe("terminal:created", callback),
   onTerminalData: (callback) => subscribe("terminal:data", callback),
   onTerminalStatus: (callback) => subscribe("terminal:status", callback),
   onTerminalExit: (callback) => subscribe("terminal:exit", callback),
   onMissionEvent: (callback) => subscribe("mission:event", callback)
 });
+
 

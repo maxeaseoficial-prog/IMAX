@@ -7,6 +7,15 @@ const { Orchestrator } = require("./orchestrator.cjs");
 const { AppState } = require("./state.cjs");
 const { PreviewManager } = require("./preview-manager.cjs");
 
+const { BrowserBridge } = require("./browser-bridge.cjs");
+const browserHandlers = new Map();
+let browserBridge = null;
+let bridgeStarting = null;
+function handle(channel, callback) {
+  browserHandlers.set(channel, callback);
+  ipcMain.handle(channel, callback);
+}
+
 app.setName("IMx");
 
 let mainWindow = null;
@@ -56,6 +65,7 @@ async function detectRuntime() {
 }
 
 function send(channel, payload) {
+  browserBridge?.broadcast(channel, payload);
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(channel, payload);
 }
@@ -111,7 +121,19 @@ function wireTerminalEvents() {
 }
 
 function registerIpc() {
-  ipcMain.handle("system:status", async () => ({
+  ipcMain.handle("browser:open", async () => {
+    if (!browserBridge) {
+      if (!bridgeStarting) bridgeStarting = new BrowserBridge({ handlers: browserHandlers }).start();
+      try { browserBridge = await bridgeStarting; }
+      catch (error) { bridgeStarting = null; throw new Error("Não foi possível abrir a ponte local (porta 47831): " + error.message); }
+    }
+    await shell.openExternal("https://imax-two.vercel.app/#pair=" + browserBridge.token);
+    return true;
+  });
+  ipcMain.handle("browser:stop", () => {
+    browserBridge?.close(); browserBridge = null; bridgeStarting = null; return true;
+  });
+  handle("system:status", async () => ({
     codexFound: Boolean(runtime.codexPath),
     codexPath: runtime.codexPath,
     codexVersion: runtime.codexVersion,
@@ -120,7 +142,7 @@ function registerIpc() {
     arch: process.arch
   }));
 
-  ipcMain.handle("workspace:choose", async () => {
+  handle("workspace:choose", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Escolha o workspace do IMx",
       properties: ["openDirectory", "createDirectory"]
@@ -130,7 +152,7 @@ function registerIpc() {
     return result.filePaths[0];
   });
 
-  ipcMain.handle("attachments:choose", async () => {
+  handle("attachments:choose", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Anexar arquivos à missão",
       properties: ["openFile", "multiSelections"]
@@ -152,31 +174,31 @@ function registerIpc() {
     });
   });
 
-  ipcMain.handle("settings:get", () => state.getSettings());
-  ipcMain.handle("settings:set", (_event, patch) => state.setSettings(patch || {}));
-  ipcMain.handle("missions:list", () => state.listMissions());
-  ipcMain.handle("mission:create", (_event, input = {}) => {
+  handle("settings:get", () => state.getSettings());
+  handle("settings:set", (_event, patch) => state.setSettings(patch || {}));
+  handle("missions:list", () => state.listMissions());
+  handle("mission:create", (_event, input = {}) => {
     const cwd = ensureProjectWorkspace(input.cwd);
     return orchestrator.createMission({ ...input, cwd });
   });
-  ipcMain.handle("mission:rename", (_event, { id, name }) => orchestrator.renameMission(id, name));
-  ipcMain.handle("mission:delete", async (_event, id) => {
+  handle("mission:rename", (_event, { id, name }) => orchestrator.renameMission(id, name));
+  handle("mission:delete", async (_event, id) => {
     const removed = orchestrator.deleteMission(id);
     await previewManager.stop(id);
     terminalManager.killMission(id, { forget: true });
     return removed;
   });
-  ipcMain.handle("mission:preview", async (_event, id) => {
+  handle("mission:preview", async (_event, id) => {
     const mission = orchestrator.getMission(id);
     if (!mission) throw new Error("Missão não encontrada.");
     if (mission.status !== "done") throw new Error("Conclua a missão antes de abrir o resultado.");
     ensureProjectWorkspace(mission.resultPath || mission.cwd);
     return previewManager.open(mission);
   });
-  ipcMain.handle("terminal:list", () => terminalManager.list());
-  ipcMain.handle("terminal:buffer", (_event, id) => terminalManager.getBuffer(id));
+  handle("terminal:list", () => terminalManager.list());
+  handle("terminal:buffer", (_event, id) => terminalManager.getBuffer(id));
 
-  ipcMain.handle("terminal:create", (_event, input = {}) => {
+  handle("terminal:create", (_event, input = {}) => {
     const cwd = ensureWorkspace(input.cwd || state.getSettings().workspace);
     const kind = input.kind === "codex" ? "codex" : "shell";
 
@@ -196,27 +218,27 @@ function registerIpc() {
     });
   });
 
-  ipcMain.handle("terminal:write", (_event, { id, data }) => terminalManager.write(id, data));
-  ipcMain.handle("terminal:resize", (_event, { id, cols, rows }) => terminalManager.resize(id, cols, rows));
-  ipcMain.handle("terminal:kill", (_event, id) => {
+  handle("terminal:write", (_event, { id, data }) => terminalManager.write(id, data));
+  handle("terminal:resize", (_event, { id, cols, rows }) => terminalManager.resize(id, cols, rows));
+  handle("terminal:kill", (_event, id) => {
     const killed = terminalManager.kill(id);
-    if (killed) orchestrator.closeAgent(id);
+    if (killed) { orchestrator.closeAgent(id); send("terminal:removed", { id }); }
     return killed;
   });
 
-  ipcMain.handle("mission:start", async (_event, input = {}) => {
+  handle("mission:start", async (_event, input = {}) => {
     const existing = input.missionId ? orchestrator.getMission(input.missionId) : null;
     const cwd = ensureProjectWorkspace(existing?.resultPath || existing?.cwd || input.cwd || state.getSettings().workspace);
     if (existing) await previewManager.stop(existing.id);
     return orchestrator.startMission({ ...input, cwd });
   });
 
-  ipcMain.handle("mission:cancel", (_event, missionId) => orchestrator.cancelMission(missionId));
-  ipcMain.handle("mission:agent-instruction", (_event, { agentId, text }) =>
+  handle("mission:cancel", (_event, missionId) => orchestrator.cancelMission(missionId));
+  handle("mission:agent-instruction", (_event, { agentId, text }) =>
     orchestrator.sendAgentInstruction(agentId, text)
   );
 
-  ipcMain.handle("path:open", async (_event, targetPath) => {
+  handle("path:open", async (_event, targetPath) => {
     if (!targetPath || !fs.existsSync(targetPath)) return false;
     const error = await shell.openPath(targetPath);
     return !error;
@@ -264,7 +286,9 @@ app.on("before-quit", (event) => {
   if (quitting || !previewManager) return;
   event.preventDefault();
   quitting = true;
+  browserBridge?.close();
   for (const mission of orchestrator.missions.values()) orchestrator.cancelMission(mission.id);
   for (const terminal of terminalManager.list()) terminalManager.kill(terminal.id, { forget: false });
   previewManager.dispose().finally(() => app.quit());
 });
+

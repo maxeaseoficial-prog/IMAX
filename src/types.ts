@@ -105,6 +105,8 @@ export interface MissionEvent {
 declare global {
   interface Window {
     imx: {
+      openBrowser?(): Promise<boolean>;
+      stopBrowser?(): Promise<boolean>;
       getSystemStatus(): Promise<SystemStatus>;
       chooseWorkspace(): Promise<string | null>;
       chooseAttachments(): Promise<Attachment[]>;
@@ -144,6 +146,7 @@ declare global {
       }>;
       openPath(targetPath: string): Promise<boolean>;
 
+      onTerminalRemoved?(callback: (payload: { id: string }) => void): () => void;
       onTerminalCreated(callback: (payload: AgentMeta) => void): () => void;
       onTerminalData(callback: (payload: { id: string; data: string }) => void): () => void;
       onTerminalStatus(callback: (payload: AgentMeta) => void): () => void;
@@ -160,4 +163,5 @@ declare global {
 }
 
 export {};
+
 
