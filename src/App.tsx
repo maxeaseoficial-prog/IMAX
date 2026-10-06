@@ -56,10 +56,12 @@ function shortPath(value?: string) {
 
 function TerminalPane({
   agent,
-  canSendInstruction
+  canSendInstruction,
+  onClose
 }: {
   agent: AgentMeta;
   canSendInstruction: boolean;
+  onClose: (id: string) => Promise<void>;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [instruction, setInstruction] = useState("");
@@ -125,8 +127,9 @@ function TerminalPane({
     terminal.loadAddon(fitAddon);
     terminal.open(hostRef.current);
 
+    let disposed = false;
     void window.imx.getTerminalBuffer(agent.id).then((buffer) => {
-      if (buffer) terminal.write(buffer);
+      if (!disposed && buffer) terminal.write(buffer);
     });
 
     const fit = () => {
@@ -150,6 +153,7 @@ function TerminalPane({
     requestAnimationFrame(fit);
 
     return () => {
+      disposed = true;
       unsubscribeData();
       inputDisposable.dispose();
       resizeObserver.disconnect();
@@ -175,7 +179,7 @@ function TerminalPane({
           <button
             className="icon-button"
             title="Encerrar terminal"
-            onClick={() => void window.imx.killTerminal(agent.id)}
+            onClick={() => void onClose(agent.id)}
           >
             ×
           </button>
@@ -235,6 +239,7 @@ export default function App() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [mission, setMission] = useState<Mission | null>(null);
   const [agents, setAgents] = useState<AgentMeta[]>([]);
+  const closedTerminals = useRef(new Set<string>());
   const [history, setHistory] = useState<Mission[]>([]);
   const [pilotLog, setPilotLog] = useState("");
   const [notice, setNotice] = useState<string>("");
@@ -267,18 +272,21 @@ export default function App() {
       setSystem(systemInfo);
       setSettings(storedSettings);
       setHistory(storedMissions);
-      setAgents(terminals);
+      setAgents(terminals.filter((agent) => !closedTerminals.current.has(agent.id)));
     });
 
     const offCreated = window.imx.onTerminalCreated((agent) => {
+      if (closedTerminals.current.has(agent.id)) return;
       setAgents((current) => upsertAgent(current, agent));
     });
 
     const offStatus = window.imx.onTerminalStatus((agent) => {
+      if (closedTerminals.current.has(agent.id)) return;
       setAgents((current) => upsertAgent(current, agent));
     });
 
     const offExit = window.imx.onTerminalExit((payload) => {
+      if (closedTerminals.current.has(payload.id)) return;
       setAgents((current) =>
         current.map((agent) =>
           agent.id === payload.id ? { ...agent, status: payload.status } : agent
@@ -325,6 +333,20 @@ export default function App() {
       offMission();
     };
   }, []);
+
+  const closeTerminal = async (id: string) => {
+    if (closedTerminals.current.has(id)) return;
+    // Suppress exit/status events before requesting process termination.
+    closedTerminals.current.add(id);
+    try {
+      const closed = await window.imx.killTerminal(id);
+      if (!closed) throw new Error("Não foi possível encerrar o terminal.");
+      setAgents((current) => current.filter((agent) => agent.id !== id));
+    } catch (error) {
+      closedTerminals.current.delete(id);
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   const persistSettings = async (patch: Partial<Settings>) => {
     const next = await window.imx.setSettings(patch);
@@ -669,6 +691,7 @@ export default function App() {
               <TerminalPane
                 key={agent.id}
                 agent={agent}
+                onClose={closeTerminal}
                 canSendInstruction={Boolean(
                   agent.kind === "mission" &&
                   agent.missionId === mission?.id &&

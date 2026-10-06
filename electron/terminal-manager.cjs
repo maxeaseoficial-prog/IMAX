@@ -91,11 +91,12 @@ class TerminalManager extends EventEmitter {
     });
 
     proc.onExit(({ exitCode, signal }) => {
-      const status = exitCode === 0 ? "done" : "error";
+      const status = session.closing ? "stopped" : exitCode === 0 ? "done" : "error";
       meta.status = status;
       const payload = { id, exitCode, signal, status, missionId: meta.missionId };
       this.lastExits.set(id, payload);
-      this.lastBuffers.set(id, session.buffer);
+      if (session.closing) this.lastBuffers.delete(id);
+      else this.lastBuffers.set(id, session.buffer);
       this.emit("status", { ...meta });
       this.emit("exit", payload);
       resolveExit(payload);
@@ -162,11 +163,17 @@ class TerminalManager extends EventEmitter {
 
   kill(id) {
     const session = this.sessions.get(id);
-    if (!session) return false;
+    if (!session) {
+      this.lastBuffers.delete(id);
+      return true;
+    }
+    if (session.closing) return true;
+    session.closing = true;
     try {
       session.proc.kill();
       return true;
     } catch {
+      session.closing = false;
       return false;
     }
   }
