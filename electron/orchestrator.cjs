@@ -243,6 +243,10 @@ class Orchestrator {
       args.push("resume", resumeSessionId);
     }
 
+    // Mission workspaces are explicitly selected and validated by Electron main.
+    // New project folders may not contain Git yet; retain sandbox/approval policy.
+    args.push("--skip-git-repo-check");
+
     for (const imagePath of images) {
       args.push("-i", imagePath);
     }

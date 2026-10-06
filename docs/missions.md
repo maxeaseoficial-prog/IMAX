@@ -19,6 +19,11 @@ npx tsc --noEmit
 npm run build
 node tests/projects.cjs
 node tests/main-ipc.cjs
+node tests/codex-workspaces.cjs
 ```
 
 Os testes usam projetos temporários e não enviam missões ao Codex. A validação de Electron, node-pty e abertura do navegador padrão deve ser feita no desktop local.
+
+## Pastas sem Git
+
+Projetos novos podem começar em pastas sem repositório Git. O IMx passa `--skip-git-repo-check` ao planejamento, aos agentes e à retomada de execuções nas pastas selecionadas para a missão. Isso evita a recusa `Not inside a trusted directory`; não desativa o sandbox nem altera a política de aprovação. Sem Git, os agentes usam o modo de workspace compartilhado existente.
